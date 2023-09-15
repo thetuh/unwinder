@@ -1,32 +1,5 @@
 #include "includes.h"
 
-DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const char* export_name, const log logging )
-{
-	constexpr auto msg_prefix = "[calculate_stack_size]";
-	const auto abort = [ & ]( const char* msg, ... ) -> int
-	{
-		if ( logging & LOG_ERRORS )
-		{
-			printf( "%s error: ", msg_prefix );
-			va_list args;
-			va_start( args, msg );
-			vprintf( msg, args );
-			va_end( args );
-			printf( "\n" );
-		}
-		return 0;
-	};
-
-	if ( !image_base )
-		return abort( "invalid image base" );
-
-	const auto export_address = ( uintptr_t ) GetProcAddress( ( HMODULE ) image_base, export_name );
-	if ( !export_address )
-		return abort( "could not retrieve function export '%s'", export_name);
-
-	return calculate_stack_size( image_base, export_address, logging, export_name );
-}
-
 DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_t function_address, const log logging, const char* function_name )
 {
 	constexpr auto msg_prefix = "[calculate_stack_size]";
@@ -74,7 +47,8 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 			continue;
 		}
 
-		printf( "%s @ 0x%p:\n", function_name, function_address );
+		if ( logging & ( LOG_OPCODES | LOG_SIZE ) )
+			printf( "%s @ 0x%p:\n", function_name, function_address );
 
 		const auto function_unwind = ( PUNWIND_INFO ) ( image_base + entry->UnwindData );
 		while ( i < function_unwind->CountOfCodes )
@@ -162,7 +136,8 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 						i += 2;
 					}
 
-					printf( "sub RSP, %lu\n", offset );
+					if ( logging & LOG_OPCODES )
+						printf( "sub RSP, %lu\n", offset );
 
 					break;
 				}
@@ -171,7 +146,7 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 					const ULONG offset = ( ( unwind_code.OpInfo + 1 ) * 8 );
 					stack_size += offset;
 
-					if ( logging & LOG_VERBOSE )
+					if ( logging & LOG_OPCODES )
 						printf( "sub RSP, %lu\n", offset );
 
 					i++;
@@ -200,7 +175,9 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 
 		}
 
-		printf( "stack size: %" PRIu64 " bytes\n-------------------------------------\n", stack_size );
+		if ( logging & LOG_SIZE )
+			printf( "stack size: %" PRIu64 " bytes\n-------------------------------------\n", stack_size );
+
 		return stack_size;
 
 		//entry++;

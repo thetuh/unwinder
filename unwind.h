@@ -33,12 +33,12 @@ namespace unwind
 {
 	enum log
 	{
-		LOG_DISABLED,
-		LOG_ERRORS,
-		LOG_OPCODES,
-		LOG_VERBOSE = ( LOG_ERRORS | LOG_OPCODES )
+		LOG_DISABLED = ( 1 << 0 ), /* don't print anything (default) */
+		LOG_SIZE = ( 1 << 1 ), /* print the returned stack size */
+		LOG_ERRORS = ( 1 << 2 ), /* print errors */
+		LOG_OPCODES = ( 1 << 3 ), /* print unwind operation codes */
+		LOG_VERBOSE = ( LOG_SIZE | LOG_ERRORS | LOG_OPCODES )
 	};
 
-	DWORD64 calculate_stack_size( const uintptr_t image_base, const char* export_name, const log logging = log::LOG_DISABLED );
 	DWORD64 calculate_stack_size( const uintptr_t image_base, const uintptr_t function_address, const log logging = log::LOG_DISABLED, const char* function_name = "function" );
 }
