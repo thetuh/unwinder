@@ -31,8 +31,14 @@ int main( )
 		return success ? 0 : 1;
 	};
 
+	/* get rid of annoying C6387 warnings */
 	const auto kernel32_base = ( uintptr_t ) GetModuleHandleA( "kernel32" );
+	if ( !kernel32_base )
+		return terminate( "kernel32.dll not found" );
+
 	const auto ntdll_base = ( uintptr_t ) GetModuleHandleA( "ntdll" );
+	if ( !ntdll_base )
+		return terminate( "ntdll.dll not found" );
 
 	if ( unwind::calculate_stack_size( kernel32_base, ( uintptr_t ) GetProcAddress( ( HMODULE ) kernel32_base, "BaseThreadInitThunk"), unwind::LOG_VERBOSE, "BaseThreadInitThunk" ) != BaseThreadInitThunkStackSize )
 		return terminate( "incorrect BaseThreadInitThunk stack size" );
