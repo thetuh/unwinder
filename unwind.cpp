@@ -1,11 +1,68 @@
 #include "includes.h"
 
-DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_t function_address, const log logging, const char* function_name )
+void uw::translate_register( UBYTE op_info, char* register_name )
+{
+	switch ( op_info )
+	{
+		case R12:
+		{
+			strcpy_s( register_name, 4, "R12" );
+			break;
+		}
+		case R13:
+		{
+			strcpy_s( register_name, 4, "R13" );
+			break;
+		}
+		case R14:
+		{
+			strcpy_s( register_name, 4, "R14" );
+			break;
+		}
+		case R15:
+		{
+			strcpy_s( register_name, 4, "R15" );
+			break;
+		}
+		case RDI:
+		{
+			strcpy_s( register_name, 4, "RDI" );
+			break;
+		}
+		case RSI:
+		{
+			strcpy_s( register_name, 4, "RSI" );
+			break;
+		}
+		case RBX:
+		{
+			strcpy_s( register_name, 4, "RBX" );
+			break;
+		}
+		case RBP:
+		{
+			strcpy_s( register_name, 4, "RBP" );
+			break;
+		}
+		case RSP:
+		{
+			strcpy_s( register_name, 4, "RSP" );
+			break;
+		}
+		default:
+		{
+			strcpy_s( register_name, 4, "???" );
+			break;
+		}
+	}
+}
+
+DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function_address, const log logging, const char* function_name )
 {
 	constexpr auto msg_prefix = "[calculate_stack_size]";
 	const auto abort = [ & ]( const char* msg, ... ) -> int
 	{
-		if ( logging & LOG_ERRORS )
+		if ( logging & LOG_RESULTS )
 		{
 			printf( "%s error: ", msg_prefix );
 			va_list args;
@@ -39,6 +96,7 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 	do
 	{
 		DWORD64 stack_size{ };
+		DWORD64 return_address_offset{ };
 		ULONG i{ };
 
 		if ( entry->BeginAddress != ( function_address - image_base ) )
@@ -47,7 +105,7 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 			continue;
 		}
 
-		if ( logging & ( LOG_OPCODES | LOG_SIZE ) )
+		if ( logging & LOG_VERBOSE )
 			printf( "%s @ 0x%p:\n", function_name, function_address );
 
 		const auto function_unwind = ( PUNWIND_INFO ) ( image_base + entry->UnwindData );
@@ -60,62 +118,12 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 				{
 					if ( logging & LOG_OPCODES )
 					{
-						printf( "push " );
-						switch ( unwind_code.OpInfo )
-						{
-							case R12:
-							{
-								printf( "R12\n" );
-								break;
-							}
-							case R13:
-							{
-								printf( "R13\n" );
-								break;
-							}
-							case R14:
-							{
-								printf( "R14\n" );
-								break;
-							}
-							case R15:
-							{
-								printf( "R15\n" );
-								break;
-							}
-							case RDI:
-							{
-								printf( "RDI\n" );
-								break;
-							}
-							case RSI:
-							{
-								printf( "RSI\n" );
-								break;
-							}
-							case RBX:
-							{
-								printf( "RBX\n" );
-								break;
-							}
-							case RBP:
-							{
-								printf( "RBP\n" );
-								break;
-							}
-							case RSP:
-							{
-								printf( "RSP\n" );
-								break;
-							}
-							default:
-							{
-								printf( "%d\n", unwind_code.OpInfo );
-								break;
-							}
-						}
+						char register_name[ 4 ];
+						translate_register( unwind_code.OpInfo, register_name );
+						printf( "push %s\n", register_name );
 					}
 
+					return_address_offset += sizeof( DWORD64 );
 					stack_size += sizeof( DWORD64 );
 					i++;
 					break;
@@ -126,12 +134,14 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 					if ( unwind_code.OpInfo )
 					{
 						offset = *( ULONG* ) ( &function_unwind->UnwindCode[ i + 1 ] );
+						return_address_offset += offset;
 						stack_size += offset;
 						i += 3;
 					}
 					else
 					{
 						offset = ( function_unwind->UnwindCode[ i + 1 ].FrameOffset * 8 );
+						return_address_offset += offset;
 						stack_size += offset;
 						i += 2;
 					}
@@ -145,6 +155,7 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 				{
 					const ULONG offset = ( ( unwind_code.OpInfo + 1 ) * 8 );
 					stack_size += offset;
+					return_address_offset += offset;
 
 					if ( logging & LOG_OPCODES )
 						printf( "sub RSP, %lu\n", offset );
@@ -154,6 +165,16 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 				}
 				case UWOP_SET_FPREG:
 				{
+					const auto frame_offset = DWORD64( 0x10 * ( function_unwind->FrameOffset ) );
+					return_address_offset -= frame_offset;
+
+					if ( logging & LOG_OPCODES )
+					{
+						char register_name[ 4 ];
+						translate_register( function_unwind->FrameRegister, register_name );
+						printf( "lea %s, [RSP+%llu]\n", register_name, frame_offset );
+					}
+
 					i++;
 					break;
 				}
@@ -175,8 +196,11 @@ DWORD64 unwind::calculate_stack_size( const uintptr_t image_base, const uintptr_
 
 		}
 
-		if ( logging & LOG_SIZE )
+		if ( logging & LOG_RESULTS )
+		{
+			printf( "return address offset: RSP + %" PRIu64 " bytes\n", return_address_offset );
 			printf( "stack size: %" PRIu64 " bytes\n-------------------------------------\n", stack_size );
+		}
 
 		return stack_size;
 

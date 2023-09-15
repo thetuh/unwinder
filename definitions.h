@@ -5,7 +5,9 @@
 #define BaseThreadInitThunkStackSize 0x28
 #define RtlUserThreadStartStackSize 0x78
 #define AddStackSize 408
-#define Add2StackSize 248
+#define AddReturnAddressOffset 376
+#define SigScanStackSize 760
+#define SigScanReturnAddressOffset 728
 
 typedef enum _REGISTERS
 {

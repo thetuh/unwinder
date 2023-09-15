@@ -29,16 +29,16 @@
 * locate the return address, get the return address, and repeat this process for each of the previous stack frames. This is the Unwind algorithm."
 */
 
-namespace unwind
+namespace uw
 {
 	enum log
 	{
 		LOG_DISABLED = ( 1 << 0 ), /* don't print anything (default) */
-		LOG_SIZE = ( 1 << 1 ), /* print the returned stack size */
-		LOG_ERRORS = ( 1 << 2 ), /* print errors */
-		LOG_OPCODES = ( 1 << 3 ), /* print unwind operation codes */
-		LOG_VERBOSE = ( LOG_SIZE | LOG_ERRORS | LOG_OPCODES )
+		LOG_RESULTS = ( 1 << 1 ), /* print results (stack size, return address offset) */
+		LOG_OPCODES = ( 1 << 2 ), /* print unwind operation codes */
+		LOG_VERBOSE = ( LOG_RESULTS | LOG_OPCODES )
 	};
 
-	DWORD64 calculate_stack_size( const uintptr_t image_base, const uintptr_t function_address, const log logging = log::LOG_DISABLED, const char* function_name = "function" );
+	void translate_register( UBYTE op_info, char* register_name );
+	DWORD64 virtual_unwind( const uintptr_t image_base, const uintptr_t function_address, const log logging = log::LOG_DISABLED, const char* function_name = "function" );
 }
