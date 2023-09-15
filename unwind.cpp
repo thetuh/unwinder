@@ -86,7 +86,7 @@ DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function
 
 	const auto exception_directory = nt_headers->OptionalHeader.DataDirectory[ IMAGE_DIRECTORY_ENTRY_EXCEPTION ];
 	if ( !exception_directory.Size || !exception_directory.VirtualAddress )
-		return abort( "could not exception directory" );
+		return abort( "could not parse exception directory" );
 
 	/* @https://klezvirus.github.io/RedTeaming/AV_Evasion/StackSpoofing/assets/runtime_exception_table.png */
 	auto entry = ( PRUNTIME_FUNCTION ) ( image_base + exception_directory.VirtualAddress );
