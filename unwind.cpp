@@ -172,7 +172,7 @@ DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function
 					{
 						char register_name[ 4 ];
 						translate_register( function_unwind->FrameRegister, register_name );
-						printf( "lea %s, [RSP+%llu]\n", register_name, frame_offset );
+						frame_offset ? printf( "lea %s, [RSP+%llu]\n", register_name, frame_offset ) : printf( "mov %s, RSP", register_name);
 					}
 
 					i++;
@@ -198,7 +198,7 @@ DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function
 
 		if ( logging & LOG_RESULTS )
 		{
-			printf( "return address offset: RSP + %" PRIu64 " bytes\n", return_address_offset );
+			printf( "return address offset: RSP+%" PRIu64 "\n", return_address_offset );
 			printf( "stack size: %" PRIu64 " bytes\n-------------------------------------\n", stack_size );
 		}
 
