@@ -34,7 +34,7 @@ namespace uw
 	enum log
 	{
 		LOG_DISABLED = ( 1 << 0 ), /* don't print anything (default) */
-		LOG_RESULTS = ( 1 << 1 ), /* print results (stack size, return address offset) */
+		LOG_RESULTS = ( 1 << 1 ), /* print errors/output info */
 		LOG_OPCODES = ( 1 << 2 ), /* print unwind operation codes */
 		LOG_VERBOSE = ( LOG_RESULTS | LOG_OPCODES )
 	};
@@ -44,8 +44,9 @@ namespace uw
 		UBYTE op_code;
 		UBYTE op_register;
 		
-		/* only used for output */
+		/* these are only used for output */
 		uintptr_t function_address;
+		DWORD64 offset;
 	};
 
 	void translate_register( UBYTE op_info, char* register_name );
@@ -60,10 +61,9 @@ namespace uw
 	* @param [in, optional] logging
 	* @param [in, optional] function name
 	* @param [in, out, optional] stack size
-	* @param [in, out, optional] return address offset
-	* @param [in, optional] desired uwop
+	* @param [in, out, optional] desired uwop
 	* 
 	* @return whether the function (with provided address or uwop) was found
 	*/
-	bool virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, const char* function_name = nullptr, DWORD64* stack_size = nullptr, DWORD64* return_address_offset = nullptr, operation* uwop = nullptr );
+	bool virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, const char* function_name = nullptr, DWORD64* stack_size = nullptr, operation* uwop = nullptr );
 }

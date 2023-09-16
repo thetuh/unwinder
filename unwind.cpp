@@ -57,7 +57,7 @@ void uw::translate_register( UBYTE op_info, char* register_name )
 	}
 }
 
-bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address, const log logging, const char* function_name, DWORD64* stack_size, DWORD64* return_address_offset, operation* uwop )
+bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address, const log logging, const char* function_name, DWORD64* stack_size, operation* uwop )
 {
 	const auto abort = [ & ]( const char* msg, ... ) -> int
 	{
@@ -84,7 +84,10 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 		return abort( "invalid function address" );
 
 	if ( uwop && uwop->function_address )
+	{
 		uwop->function_address = 0;
+		uwop->offset = 0;
+	}
 
 	const auto nt_headers = ( PIMAGE_NT_HEADERS ) ( image_base + PIMAGE_DOS_HEADER( image_base )->e_lfanew );
 	if ( !nt_headers || nt_headers->Signature != IMAGE_NT_SIGNATURE )
@@ -111,15 +114,11 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 			printf( "%s @ 0x%p:\n", function_name, ( entry->BeginAddress + image_base ) );
 
 		DWORD64 temp_stack_size{ };
-		DWORD64 temp_return_address_offset{ };
 
 		if ( !stack_size )
 			stack_size = &temp_stack_size;
-		if ( !return_address_offset )
-			return_address_offset = &temp_return_address_offset;
 
 		*stack_size = 0;
-		*return_address_offset = 0;
 
 		ULONG i{ };
 		const auto function_unwind = ( PUNWIND_INFO ) ( image_base + entry->UnwindData );
@@ -127,8 +126,19 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 		{
 			const auto& unwind_code = function_unwind->UnwindCode[ i ];
 
-			if ( uwop && uwop->op_code == unwind_code.UnwindOp && uwop->op_register == unwind_code.OpInfo )
-				uwop->function_address = ( entry->BeginAddress + image_base );
+			if ( uwop )
+			{
+				if ( uwop->op_code == unwind_code.UnwindOp && unwind_code.UnwindOp == UWOP_SET_FPREG && uwop->op_register == function_unwind->FrameRegister )
+				{
+					uwop->function_address = ( entry->BeginAddress + image_base );
+					uwop->offset = *stack_size;
+				}
+				else if ( uwop->op_code == unwind_code.UnwindOp && uwop->op_register == unwind_code.OpInfo )
+				{
+					uwop->function_address = ( entry->BeginAddress + image_base );
+					uwop->offset = *stack_size;
+				}
+			}
 
 			switch ( unwind_code.UnwindOp )
 			{
@@ -141,7 +151,6 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 						printf( "push %s\n", register_name );
 					}
 
-					*return_address_offset += sizeof( DWORD64 );
 					*stack_size += sizeof( DWORD64 );
 
 					i++;
@@ -153,7 +162,6 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 					if ( unwind_code.OpInfo )
 					{
 						offset = *( ULONG* ) ( &function_unwind->UnwindCode[ i + 1 ] );
-						*return_address_offset += offset;
 						*stack_size += offset;
 
 						i += 3;
@@ -161,7 +169,6 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 					else
 					{
 						offset = ( function_unwind->UnwindCode[ i + 1 ].FrameOffset * 8 );
-						*return_address_offset += offset;
 						*stack_size += offset;
 
 						i += 2;
@@ -176,7 +183,6 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 				{
 					const ULONG offset = ( ( unwind_code.OpInfo + 1 ) * 8 );
 					*stack_size += offset;
-					*return_address_offset += offset;
 
 					if ( logging & LOG_OPCODES )
 						printf( "sub RSP, %lu\n", offset );
@@ -187,7 +193,6 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 				case UWOP_SET_FPREG:
 				{
 					const auto frame_offset = DWORD64( 0x10 * ( function_unwind->FrameOffset ) );
-					*return_address_offset -= frame_offset;
 
 					if ( logging & LOG_OPCODES )
 					{
@@ -202,6 +207,16 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 				case UWOP_PUSH_MACHFRAME:
 				{
 					i++;
+					break;
+				}
+				case UWOP_SAVE_NONVOL:
+				{
+					i += 2;
+					break;
+				}
+				case UWOP_SAVE_NONVOL_FAR:
+				{
+					i += 3;
 					break;
 				}
 				default:
@@ -219,14 +234,14 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 
 		if ( logging & LOG_RESULTS )
 		{
-			printf( "return address offset: RSP+%" PRIu64 "\n", *return_address_offset );
+			if ( uwop && uwop->function_address )
+				printf( "uwop offset: %" PRIu64 " bytes\n", uwop->offset );
+
 			printf( "stack size: %" PRIu64 " bytes\n", *stack_size );
 		}
 
 		if ( logging & LOG_VERBOSE )
-		{
 			printf( "-------------------------------------\n" );
-		}
 
 		/* exlusive address-based search */
 		if ( function_address && !uwop )
