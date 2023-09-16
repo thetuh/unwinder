@@ -57,28 +57,34 @@ void uw::translate_register( UBYTE op_info, char* register_name )
 	}
 }
 
-DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function_address, const log logging, const char* function_name )
+bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address, const log logging, const char* function_name, DWORD64* stack_size, DWORD64* return_address_offset, operation* uwop )
 {
-	constexpr auto msg_prefix = "[calculate_stack_size]";
 	const auto abort = [ & ]( const char* msg, ... ) -> int
 	{
 		if ( logging & LOG_RESULTS )
 		{
-			printf( "%s error: ", msg_prefix );
+			printf( "[virtual_unwind] error: ");
 			va_list args;
 			va_start( args, msg );
 			vprintf( msg, args );
 			va_end( args );
 			printf( "\n" );
 		}
-		return 0;
+		return false;
 	};
+
+	constexpr char func_name[] = "function";
+	if ( !function_name )
+		function_name = func_name;
 
 	if ( !image_base )
 		return abort( "invalid image base" );
 
-	if ( !function_address )
+	if ( function_address && !*function_address )
 		return abort( "invalid function address" );
+
+	if ( uwop && uwop->function_address )
+		uwop->function_address = 0;
 
 	const auto nt_headers = ( PIMAGE_NT_HEADERS ) ( image_base + PIMAGE_DOS_HEADER( image_base )->e_lfanew );
 	if ( !nt_headers || nt_headers->Signature != IMAGE_NT_SIGNATURE )
@@ -95,24 +101,36 @@ DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function
 	/* @https://doxygen.reactos.org/d8/d2f/unwind_8c_source.html */
 	do
 	{
-		DWORD64 stack_size{ };
-		DWORD64 return_address_offset{ };
-		ULONG i{ };
-
-		if ( entry->BeginAddress != ( function_address - image_base ) )
+		if ( function_address && entry->BeginAddress != ( *function_address - image_base ) )
 		{
 			entry++;
 			continue;
 		}
 
 		if ( logging & LOG_VERBOSE )
-			printf( "%s @ 0x%p:\n", function_name, function_address );
+			printf( "%s @ 0x%p:\n", function_name, ( entry->BeginAddress + image_base ) );
 
+		DWORD64 temp_stack_size{ };
+		DWORD64 temp_return_address_offset{ };
+
+		if ( !stack_size )
+			stack_size = &temp_stack_size;
+		if ( !return_address_offset )
+			return_address_offset = &temp_return_address_offset;
+
+		*stack_size = 0;
+		*return_address_offset = 0;
+
+		ULONG i{ };
 		const auto function_unwind = ( PUNWIND_INFO ) ( image_base + entry->UnwindData );
 		while ( i < function_unwind->CountOfCodes )
 		{
 			const auto& unwind_code = function_unwind->UnwindCode[ i ];
-			switch ( function_unwind->UnwindCode[ i ].UnwindOp )
+
+			if ( uwop && uwop->op_code == unwind_code.UnwindOp && uwop->op_register == unwind_code.OpInfo )
+				uwop->function_address = ( entry->BeginAddress + image_base );
+
+			switch ( unwind_code.UnwindOp )
 			{
 				case UWOP_PUSH_NONVOL:
 				{
@@ -123,8 +141,9 @@ DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function
 						printf( "push %s\n", register_name );
 					}
 
-					return_address_offset += sizeof( DWORD64 );
-					stack_size += sizeof( DWORD64 );
+					*return_address_offset += sizeof( DWORD64 );
+					*stack_size += sizeof( DWORD64 );
+
 					i++;
 					break;
 				}
@@ -134,15 +153,17 @@ DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function
 					if ( unwind_code.OpInfo )
 					{
 						offset = *( ULONG* ) ( &function_unwind->UnwindCode[ i + 1 ] );
-						return_address_offset += offset;
-						stack_size += offset;
+						*return_address_offset += offset;
+						*stack_size += offset;
+
 						i += 3;
 					}
 					else
 					{
 						offset = ( function_unwind->UnwindCode[ i + 1 ].FrameOffset * 8 );
-						return_address_offset += offset;
-						stack_size += offset;
+						*return_address_offset += offset;
+						*stack_size += offset;
+
 						i += 2;
 					}
 
@@ -154,8 +175,8 @@ DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function
 				case UWOP_ALLOC_SMALL:
 				{
 					const ULONG offset = ( ( unwind_code.OpInfo + 1 ) * 8 );
-					stack_size += offset;
-					return_address_offset += offset;
+					*stack_size += offset;
+					*return_address_offset += offset;
 
 					if ( logging & LOG_OPCODES )
 						printf( "sub RSP, %lu\n", offset );
@@ -166,13 +187,13 @@ DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function
 				case UWOP_SET_FPREG:
 				{
 					const auto frame_offset = DWORD64( 0x10 * ( function_unwind->FrameOffset ) );
-					return_address_offset -= frame_offset;
+					*return_address_offset -= frame_offset;
 
 					if ( logging & LOG_OPCODES )
 					{
 						char register_name[ 4 ];
 						translate_register( function_unwind->FrameRegister, register_name );
-						frame_offset ? printf( "lea %s, [RSP+%llu]\n", register_name, frame_offset ) : printf( "mov %s, RSP", register_name);
+						frame_offset ? printf( "lea %s, [RSP+%llu]\n", register_name, frame_offset ) : printf( "mov %s, RSP\n", register_name);
 					}
 
 					i++;
@@ -198,15 +219,32 @@ DWORD64 uw::virtual_unwind( const uintptr_t image_base, const uintptr_t function
 
 		if ( logging & LOG_RESULTS )
 		{
-			printf( "return address offset: RSP+%" PRIu64 "\n", return_address_offset );
-			printf( "stack size: %" PRIu64 " bytes\n-------------------------------------\n", stack_size );
+			printf( "return address offset: RSP+%" PRIu64 "\n", *return_address_offset );
+			printf( "stack size: %" PRIu64 " bytes\n", *stack_size );
 		}
 
-		return stack_size;
+		if ( logging & LOG_VERBOSE )
+		{
+			printf( "-------------------------------------\n" );
+		}
 
-		//entry++;
+		/* exlusive address-based search */
+		if ( function_address && !uwop )
+			return true;
+
+		/* uwop-based search */
+		if ( uwop && uwop->function_address )
+			return true;
+
+		entry++;
 
 	} while ( entry != end );
 
-	return abort( "function '%s' not found in RUNTIME_FUNCTION table" );
+	if ( function_address && !uwop )
+		return abort( "function '%s' with address 0x%p not found", function_name, *function_address );
+
+	if ( uwop )
+		return abort( "function '%s' with uwop not found", function_name );
+
+	return abort( "no search parameters specified" );
 }

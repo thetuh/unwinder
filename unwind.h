@@ -39,6 +39,31 @@ namespace uw
 		LOG_VERBOSE = ( LOG_RESULTS | LOG_OPCODES )
 	};
 
+	struct operation
+	{
+		UBYTE op_code;
+		UBYTE op_register;
+		
+		/* only used for output */
+		uintptr_t function_address;
+	};
+
 	void translate_register( UBYTE op_info, char* register_name );
-	DWORD64 virtual_unwind( const uintptr_t image_base, const uintptr_t function_address, const log logging = log::LOG_DISABLED, const char* function_name = "function" );
+
+	/*
+	* unwinds a function by enumerating through its associated uwop info/codes and dynamically calculating its stack size and return address offset
+	* 
+	* @brief NOTE: to use this function to find a particular uwop frame, provide the uwop and pass nullptr for the function address otherwise search will be filtered
+	* 
+	* @param [in] base address of module/process
+	* @param [in, optional] base address of function
+	* @param [in, optional] logging
+	* @param [in, optional] function name
+	* @param [in, out, optional] stack size
+	* @param [in, out, optional] return address offset
+	* @param [in, optional] desired uwop
+	* 
+	* @return whether the function (with provided address or uwop) was found
+	*/
+	bool virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, const char* function_name = nullptr, DWORD64* stack_size = nullptr, DWORD64* return_address_offset = nullptr, operation* uwop = nullptr );
 }

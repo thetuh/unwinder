@@ -95,23 +95,52 @@ int main( )
 	if ( !ntdll_base )
 		return terminate( "ntdll.dll not found" );
 
-	if ( uw::virtual_unwind( kernel32_base, ( uintptr_t ) GetProcAddress( ( HMODULE ) kernel32_base, "BaseThreadInitThunk"), uw::LOG_VERBOSE, "BaseThreadInitThunk" ) != BaseThreadInitThunkStackSize )
-		return terminate( "incorrect BaseThreadInitThunk stack size" );
+    const auto base_init_thread_thunk = ( uintptr_t ) GetProcAddress( ( HMODULE ) kernel32_base, "BaseThreadInitThunk" );
+    const auto rtl_user_thread_start = ( uintptr_t ) GetProcAddress( ( HMODULE ) ntdll_base, "RtlUserThreadStart" );
 
-	if ( uw::virtual_unwind( ntdll_base, ( uintptr_t ) GetProcAddress( ( HMODULE ) ntdll_base, "RtlUserThreadStart"), uw::LOG_VERBOSE, "RtlUserThreadStart" ) != RtlUserThreadStartStackSize )
-		return terminate( "incorrect RtlUserThreadStart stack size" );
+    if ( !uw::virtual_unwind( kernel32_base, &base_init_thread_thunk, uw::LOG_VERBOSE, "BaseThreadInitThunk" ) )
+        return terminate( "virtual_unwind failed for BaseThreadInitThunk" );
+
+    if ( !uw::virtual_unwind( ntdll_base, &rtl_user_thread_start, uw::LOG_VERBOSE, "RtlUserThreadStart" ) )
+        return terminate( "virtual_unwind failed for RtlUserThreadStart" );
 
 	/* these get optimized out in release mode */
 #ifdef _DEBUG
-	const auto process_base = ( uintptr_t ) GetModuleHandleA( NULL );
+    const auto process_base = ( uintptr_t ) GetModuleHandleA( NULL );
 	const auto add_address = RVA( ( uintptr_t ) add, 5 );
 	const auto sig_scan_address = RVA( ( uintptr_t ) sig_scan, 5 );
 
-	if ( uw::virtual_unwind( process_base, add_address, uw::LOG_VERBOSE, "add" ) != AddStackSize )
-		return terminate( "incorrect add stack size" );
+    DWORD64 stack_size{ };
+    DWORD64 return_address_offset{ };
 
-	if ( uw::virtual_unwind( process_base, sig_scan_address, uw::LOG_VERBOSE, "sig_scan" ) != SigScanStackSize )
-		return terminate( "incorrect sig_scan stack size" );
+    /* test stack size/return address offset detection */
+
+    if ( !uw::virtual_unwind( process_base, &add_address, uw::LOG_VERBOSE, "add", &stack_size, &return_address_offset ) )
+        return terminate( "virtual_unwind failed for add" );
+
+    if ( stack_size != AddStackSize || return_address_offset != AddReturnAddressOffset )
+        return terminate( "incorrect unwind for add" );
+
+    if ( !uw::virtual_unwind( process_base, &sig_scan_address, uw::LOG_VERBOSE, "sig_scan", &stack_size, &return_address_offset ) )
+        return terminate( "virtual_unwind failed for sig_scan" );
+
+    if ( stack_size != SigScanStackSize || return_address_offset != SigScanReturnAddressOffset )
+        return terminate( "incorrect unwind for sig_scan" );
+
+    /* test uwop detection */
+
+    uw::operation uwop{ };
+    uwop.op_code = UWOP_PUSH_NONVOL;
+    uwop.op_register = RBP;
+
+    if ( !uw::virtual_unwind( process_base, &add_address, uw::LOG_VERBOSE, "add", nullptr, nullptr, &uwop ) )
+        return terminate( "incorrect uwop add" );
+
+    uwop.op_register = RBP;
+
+    if ( !uw::virtual_unwind( process_base, &sig_scan_address, uw::LOG_VERBOSE, "add", nullptr, nullptr, &uwop ) )
+        return terminate( "incorrect uwop add" );
+
 #endif
 
 	return terminate( "success", true );
