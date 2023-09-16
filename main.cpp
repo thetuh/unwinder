@@ -55,6 +55,7 @@ int main( )
 		return terminate( "could not locate first frame" );
 
 	printf( "first frame address: 0x%p\n", f1_addresss );
+	printf( "first frame stack size: %llu\n", f1_stack_size );
 
 	/* second frame (push rbp) */
 
@@ -66,7 +67,8 @@ int main( )
 	if ( !f2_address )
 		return terminate( "could not locate second frame" );
 
-	printf( "first frame address: 0x%p\n", f2_address );
+	printf( "second frame address: 0x%p\n", f2_address );
+	printf( "second frame stack size: %llu\n", f2_stack_size );
 
 	/* third frame (jmp rbx gadget) */
 
