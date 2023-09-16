@@ -57,7 +57,7 @@ void uw::translate_register( UBYTE op_info, char* register_name )
 	}
 }
 
-uintptr_t uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address, const log logging, const char* function_name, DWORD64* stack_size, operation* uwop, const char* signature  )
+uintptr_t uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address, const log logging, const char* function_name, DWORD64* stack_size, operation* uwop, const sig_scan* signature_scan )
 {
 	const auto abort = [ & ]( const char* msg, ... ) -> int
 	{
@@ -250,10 +250,12 @@ uintptr_t uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* funct
 		if ( uwop && out_func_address )
 			return out_func_address;
 
-		if ( signature )
+		/* signature-based search */
+		if ( signature_scan && signature_scan->pattern )
 		{
-			if ( util::sig_scan( signature, ( entry->BeginAddress + image_base ), ( entry->EndAddress + image_base ) ) )
-				return ( entry->BeginAddress + image_base );
+			const auto direct_sig_address = util::sig_scan( signature_scan->pattern, ( entry->BeginAddress + image_base ), ( entry->EndAddress + image_base ) );
+			if ( direct_sig_address )
+				return signature_scan->return_type == sig_scan::DIRECT_ADDRESS ? direct_sig_address : ( entry->BeginAddress + image_base );
 		}
 
 		entry++;
@@ -266,7 +268,7 @@ uintptr_t uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* funct
 	if ( uwop )
 		return abort( "function '%s' with uwop not found", function_name );
 
-	if ( signature )
+	if ( signature_scan )
 		return abort( "signature not found" );
 
 	return abort( "no search parameters specified" );

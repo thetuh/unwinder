@@ -48,12 +48,23 @@ namespace uw
 		DWORD64 offset;
 	};
 
+	struct sig_scan
+	{
+		enum address_type
+		{
+			DIRECT_ADDRESS, /* return addresss of gadget instruction */
+			FUNCTION_ADDRESS /* return address of the function that the gadget resides in */
+		};
+
+		const char* pattern;
+		address_type return_type = DIRECT_ADDRESS;
+
+	};
+
 	void translate_register( UBYTE op_info, char* register_name );
 
 	/*
 	* unwinds a function by enumerating through its associated uwop info/codes and dynamically calculating its stack size and return address offset
-	* 
-	* @brief NOTE: to use this function to find a particular uwop frame, provide the uwop and pass nullptr for the function address otherwise search will be filtered
 	* 
 	* @param [in] base address of module/process
 	* @param [in, optional] base address of function
@@ -65,5 +76,5 @@ namespace uw
 	* 
 	* @return address of fuction, if found to meet search parameters
 	*/
-	uintptr_t virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, const char* function_name = nullptr, DWORD64* stack_size = nullptr, operation* uwop = nullptr, const char* signature = nullptr );
+	uintptr_t virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, const char* function_name = nullptr, DWORD64* stack_size = nullptr, operation* uwop = nullptr, const sig_scan* signature_scan = nullptr );
 }

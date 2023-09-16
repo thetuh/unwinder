@@ -20,7 +20,7 @@ int main( )
 	const auto base_init_thread_thunk = ( uintptr_t ) GetProcAddress( ( HMODULE ) kernel32_base, "BaseThreadInitThunk" );
 	const auto rtl_user_thread_start = ( uintptr_t ) GetProcAddress( ( HMODULE ) ntdll_base, "RtlUserThreadStart" );
 	
-	printf( "performing tests\n-------------------------------------\n" );
+	printf( "-------------------------------------\nperforming tests\n-------------------------------------\n" );
 	{
 		DWORD64 stack_size{ };
 
@@ -50,8 +50,11 @@ int main( )
 	uwop.op_code = UWOP_SET_FPREG;
 	uwop.op_register = RBP;
 
-	if ( !uw::virtual_unwind( kernelbase, nullptr, uw::LOG_RESULTS, nullptr, &f1_stack_size, &uwop ) )
+	const auto f1_addresss = uw::virtual_unwind( kernelbase, nullptr, uw::LOG_DISABLED, nullptr, &f1_stack_size, &uwop );
+	if ( !f1_addresss )
 		return terminate( "could not locate first frame" );
+
+	printf( "first frame address: 0x%p\n", f1_addresss );
 
 	/* second frame (push rbp) */
 
@@ -59,15 +62,39 @@ int main( )
 	uwop.op_code = UWOP_PUSH_NONVOL;
 	uwop.op_register = RBP;
 
-	if ( !uw::virtual_unwind( kernelbase, nullptr, uw::LOG_RESULTS, nullptr, &f2_stack_size, &uwop ) )
+	const auto f2_address = uw::virtual_unwind( kernelbase, nullptr, uw::LOG_DISABLED, nullptr, &f2_stack_size, &uwop );
+	if ( !f2_address )
 		return terminate( "could not locate second frame" );
+
+	printf( "first frame address: 0x%p\n", f2_address );
 
 	/* third frame (jmp rbx gadget) */
 
-	DWORD64 gadget_stack_size{ };
+	uw::sig_scan gadget_sig{ };
+	gadget_sig.pattern = "FF 23";
+	gadget_sig.return_type = uw::sig_scan::DIRECT_ADDRESS;
 
-	if ( !uw::virtual_unwind( kernelbase, nullptr, uw::LOG_DISABLED, nullptr, &gadget_stack_size, nullptr, "FF 23" ) )
-		return terminate( "gadget not within function" );
+	DWORD64 gadget_stack_size{ };
+	const auto gadget = uw::virtual_unwind( kernelbase, nullptr, uw::LOG_DISABLED, nullptr, &gadget_stack_size, nullptr, &gadget_sig );
+	if ( !gadget )
+		return terminate( "gadget not found" );
+
+	printf( "gadget address: 0x%p\n", gadget );
+	printf( "stack size: %llu\n", gadget_stack_size );
+
+	/* fourth frame (add rsp) */
+
+	uw::sig_scan gadget2_sig{ };
+	gadget2_sig.pattern = "48 83 C4 38 C3";
+	gadget2_sig.return_type = uw::sig_scan::DIRECT_ADDRESS;
+
+	DWORD64 gadget2_stack_size{ };
+	const auto gadget2 = uw::virtual_unwind( kernelbase, nullptr, uw::LOG_DISABLED, nullptr, &gadget2_stack_size, nullptr, &gadget2_sig );
+	if ( !gadget2 )
+		return terminate( "gadget2 not found" );
+
+	printf( "gadget address: 0x%p\n", gadget2 );
+	printf( "stack size: %llu\n", gadget2_stack_size );
 
 	return terminate( "success", true );
 }
