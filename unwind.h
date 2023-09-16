@@ -44,8 +44,7 @@ namespace uw
 		UBYTE op_code;
 		UBYTE op_register;
 		
-		/* these are only used for output */
-		uintptr_t function_address;
+		/* only for output */
 		DWORD64 offset;
 	};
 
@@ -62,8 +61,9 @@ namespace uw
 	* @param [in, optional] function name
 	* @param [in, out, optional] stack size
 	* @param [in, out, optional] desired uwop
+	* @param [in, optional] signature to scan
 	* 
-	* @return whether the function (with provided address or uwop) was found
+	* @return address of fuction, if found to meet search parameters
 	*/
-	bool virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, const char* function_name = nullptr, DWORD64* stack_size = nullptr, operation* uwop = nullptr );
+	uintptr_t virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, const char* function_name = nullptr, DWORD64* stack_size = nullptr, operation* uwop = nullptr, const char* signature = nullptr );
 }

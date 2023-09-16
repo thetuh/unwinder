@@ -57,7 +57,7 @@ void uw::translate_register( UBYTE op_info, char* register_name )
 	}
 }
 
-bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address, const log logging, const char* function_name, DWORD64* stack_size, operation* uwop )
+uintptr_t uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address, const log logging, const char* function_name, DWORD64* stack_size, operation* uwop, const char* signature  )
 {
 	const auto abort = [ & ]( const char* msg, ... ) -> int
 	{
@@ -83,11 +83,8 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 	if ( function_address && !*function_address )
 		return abort( "invalid function address" );
 
-	if ( uwop && uwop->function_address )
-	{
-		uwop->function_address = 0;
+	if ( uwop )
 		uwop->offset = 0;
-	}
 
 	const auto nt_headers = ( PIMAGE_NT_HEADERS ) ( image_base + PIMAGE_DOS_HEADER( image_base )->e_lfanew );
 	if ( !nt_headers || nt_headers->Signature != IMAGE_NT_SIGNATURE )
@@ -100,6 +97,8 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 	/* @https://klezvirus.github.io/RedTeaming/AV_Evasion/StackSpoofing/assets/runtime_exception_table.png */
 	auto entry = ( PRUNTIME_FUNCTION ) ( image_base + exception_directory.VirtualAddress );
 	const auto end = ( PRUNTIME_FUNCTION ) ( image_base + exception_directory.VirtualAddress + exception_directory.Size );
+
+	uintptr_t out_func_address{ };
 
 	/* @https://doxygen.reactos.org/d8/d2f/unwind_8c_source.html */
 	do
@@ -130,12 +129,12 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 			{
 				if ( uwop->op_code == unwind_code.UnwindOp && unwind_code.UnwindOp == UWOP_SET_FPREG && uwop->op_register == function_unwind->FrameRegister )
 				{
-					uwop->function_address = ( entry->BeginAddress + image_base );
+					out_func_address = ( entry->BeginAddress + image_base );
 					uwop->offset = *stack_size;
 				}
 				else if ( uwop->op_code == unwind_code.UnwindOp && uwop->op_register == unwind_code.OpInfo )
 				{
-					uwop->function_address = ( entry->BeginAddress + image_base );
+					out_func_address = ( entry->BeginAddress + image_base );
 					uwop->offset = *stack_size;
 				}
 			}
@@ -234,7 +233,7 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 
 		if ( logging & LOG_RESULTS )
 		{
-			if ( uwop && uwop->function_address )
+			if ( uwop && out_func_address )
 				printf( "uwop offset: %" PRIu64 " bytes\n", uwop->offset );
 
 			printf( "stack size: %" PRIu64 " bytes\n", *stack_size );
@@ -245,11 +244,17 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 
 		/* exlusive address-based search */
 		if ( function_address && !uwop )
-			return true;
+			return *function_address;
 
 		/* uwop-based search */
-		if ( uwop && uwop->function_address )
-			return true;
+		if ( uwop && out_func_address )
+			return out_func_address;
+
+		if ( signature )
+		{
+			if ( util::sig_scan( signature, ( entry->BeginAddress + image_base ), ( entry->EndAddress + image_base ) ) )
+				return ( entry->BeginAddress + image_base );
+		}
 
 		entry++;
 
@@ -260,6 +265,9 @@ bool uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* function_a
 
 	if ( uwop )
 		return abort( "function '%s' with uwop not found", function_name );
+
+	if ( signature )
+		return abort( "signature not found" );
 
 	return abort( "no search parameters specified" );
 }

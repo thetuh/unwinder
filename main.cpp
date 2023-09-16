@@ -64,11 +64,10 @@ int main( )
 
 	/* third frame (jmp rbx gadget) */
 
-	const auto jmp_rbx =  util::sig_scan( "FF 23", kernelbase );
-	if ( !jmp_rbx )
-		return terminate( "could not locate jmp rbx gadget" );
+	DWORD64 gadget_stack_size{ };
 
-	printf( "0x%p\n", jmp_rbx );
+	if ( !uw::virtual_unwind( kernelbase, nullptr, uw::LOG_DISABLED, nullptr, &gadget_stack_size, nullptr, "FF 23" ) )
+		return terminate( "gadget not within function" );
 
 	return terminate( "success", true );
 }
