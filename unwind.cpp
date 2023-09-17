@@ -200,6 +200,8 @@ uintptr_t uw::virtual_unwind( const uintptr_t image_base, const uintptr_t* funct
 						frame_offset ? printf( "lea %s, [RSP+%llu]\n", register_name, frame_offset ) : printf( "mov %s, RSP\n", register_name);
 					}
 
+					*stack_size -= frame_offset;
+
 					i++;
 					break;
 				}
