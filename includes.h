@@ -8,7 +8,7 @@
 #include <thread>
 #include <Psapi.h>
 #include <TlHelp32.h>
-#include <unordered_map>
+#include <unordered_set>
 
 #include <dbghelp.h>
 #pragma comment(lib, "dbghelp.lib")

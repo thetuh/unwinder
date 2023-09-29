@@ -1,7 +1,5 @@
 #include "includes.h"
 
-void call_msgbox( ){ MessageBoxA( NULL, "regular call", "title", MB_OK ); }
-
 int main( )
 {
 	const auto terminate = [ & ]( const char* msg, const bool success = false ) -> int

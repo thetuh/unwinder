@@ -82,7 +82,7 @@ namespace uw
 	*/
 	uintptr_t query_unwind_info( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, DWORD64* stack_size = nullptr, operation* uwop = nullptr, const sig_scan* signature_scan = nullptr );
 
-	/* walks the callstack of the running thread */
+	/* walks the callstack of the running thread (doesn't integrity check) */
 	void stack_walk( );
 
 	/* walks the callstack of a specified <process_id, thread_id> pair */

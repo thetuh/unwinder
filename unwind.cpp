@@ -148,44 +148,43 @@ void uw::stack_walk( )
 
 void uw::stack_walk( const DWORD pid, const DWORD tid )
 {
-	if ( tid == GetCurrentThreadId( ) )
-		return stack_walk( );
+	static std::unordered_set<DWORD>blacklisted_pids;
+	if ( blacklisted_pids.find( pid ) != blacklisted_pids.end( ) )
+		return;
 
 	const HANDLE process = OpenProcess( PROCESS_ALL_ACCESS, FALSE, pid );
 	if ( !process )
 	{
-		printf( "[stack_walk] error: failed to open process handle\n" );
+		printf( "[stack_walk] error: failed to open process handle (pid: %lu)\n-------------------------------------\n", pid );
+		blacklisted_pids.insert( pid );
 		return;
 	}
 
 	const HANDLE thread = OpenThread( THREAD_ALL_ACCESS, FALSE, tid );
 	if ( !thread )
 	{
-		printf( "[stack_walk] error: failed to open thread handle\n" );
+		printf( "[stack_walk] error: failed to open thread handle\n-------------------------------------\n" );
 		CloseHandle( process );
 		return;
 	}
 
-	CHAR process_name[ MAX_PATH ];
-	GetModuleFileNameExA( process, NULL, process_name, MAX_PATH );
-	printf( "stack walk (%s, pid:%lu, tid:%lu)\n", strrchr( process_name, '\\' ) + 1, pid, tid );
-
 	stack_walk( process, thread );
-
-	printf( "-------------------------------------\n" );
-
 	CloseHandle( thread );
 	CloseHandle( process );
 }
 
 void uw::stack_walk( const HANDLE process, const HANDLE thread )
 {
+	CHAR process_name[ MAX_PATH ];
+	GetModuleFileNameExA( process, NULL, process_name, MAX_PATH );
+	printf( "stack walk (%s, pid:%lu, tid:%lu)\n", strrchr( process_name, '\\' ) + 1, GetProcessId( process ), GetThreadId( thread ) );
+
 	CONTEXT context{ };
 	context.ContextFlags = CONTEXT_FULL;
 
 	if ( !GetThreadContext( thread, &context ) || !internal::load_process_symbols( process ) )
 	{
-		printf( "[stack_walk] error: failed to get thread context\n" );
+		printf( "[stack_walk] error: failed to get thread context\n-------------------------------------\n" );
 		return;
 	}
 
@@ -267,9 +266,10 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 			}
 			else if ( og_instruction[ 0 ] == 0xFF )
 			{
-				/* no reliable way of checking this function (that i know of) */
 				static auto base_thread_init_thunk = ( uintptr_t ) GetProcAddress( GetModuleHandleA( "kernel32" ), "BaseThreadInitThunk" );
 				static auto rtl_user_thread_start = ( uintptr_t ) GetProcAddress( GetModuleHandleA( "ntdll" ), "RtlUserThreadStart" );
+
+				/* no reliable way of checking this function (that i know of) */
 				if ( frame_return_address == base_thread_init_thunk + 0x14 )
 				{
 					last_function_address = base_thread_init_thunk;
@@ -389,6 +389,8 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 		if ( address_discrepancy )
 			printf( " * found call address discrepancy\n" );
 	}
+
+	printf( "-------------------------------------\n" );
 
 	SymCleanup( process );
 }
