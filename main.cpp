@@ -110,6 +110,10 @@ int main( )
 	config.arg3 = ( PVOID ) "title";
 	config.arg4 = ( PVOID ) MB_OK;
 
+	auto spoofed_thread = std::thread( &experimental_spoof, &config );
+	const auto tid = GetThreadId( spoofed_thread.native_handle( ) );
+	spoofed_thread.detach( );
+
 	getchar( );
 
 	const HANDLE thread_snapshot{ CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 ) };
@@ -123,6 +127,9 @@ int main( )
 		do { uw::stack_walk( thread_entry.th32OwnerProcessID, thread_entry.th32ThreadID ); } while ( Thread32Next( thread_snapshot, &thread_entry ) );
 
 	CloseHandle( thread_snapshot );
+
+	//uw::stack_walk( GetCurrentProcessId( ), tid );
+	//uw::stack_walk( 14076, 6084 );
 
 	return terminate( "success", true );
 }

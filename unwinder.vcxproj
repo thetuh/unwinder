@@ -141,6 +141,7 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="unwind.cpp" />
     <ClCompile Include="util.cpp" />
+    <ClCompile Include="Zydis.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="definitions.h" />
@@ -149,6 +150,7 @@
     <ClInclude Include="tinyformat.h" />
     <ClInclude Include="unwind.h" />
     <ClInclude Include="util.h" />
+    <ClInclude Include="Zydis.h" />
   </ItemGroup>
   <ItemGroup>
     <MASM Include="experimental.asm" />

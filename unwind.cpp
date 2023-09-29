@@ -1,5 +1,7 @@
 #include "includes.h"
 
+#include "Zydis.h"
+
 bool in_valid_module( const uintptr_t address, const DWORD pid )
 {
 	const HANDLE snapshot{ CreateToolhelp32Snapshot( TH32CS_SNAPMODULE, pid ) };
@@ -98,7 +100,7 @@ bool uw::internal::load_process_symbols( const HANDLE process )
 	if ( GetModuleInformation( process, NULL, &module_info, sizeof( module_info ) ) )
 		SymLoadModuleEx( process, NULL, NULL, NULL, ( DWORD64 ) module_info.lpBaseOfDll, module_info.SizeOfImage, NULL, 0 );
 	else
-		printf( "GetModuleInformation failed, error %d\n", GetLastError( ) );
+		printf( "GetModuleInformation failed, error 0x%p\n", GetLastError( ) );
 
 	return true;
 }
@@ -182,11 +184,21 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 	CONTEXT context{ };
 	context.ContextFlags = CONTEXT_FULL;
 
-	if ( !GetThreadContext( thread, &context ) || !internal::load_process_symbols( process ) )
+	if ( !GetThreadContext( thread, &context ) )
 	{
 		printf( "[stack_walk] error: failed to get thread context\n-------------------------------------\n" );
 		return;
 	}
+
+	if ( !internal::load_process_symbols( process ) )
+	{
+		printf( "[stack_walk] error: failed to load process symbols\n-------------------------------------\n" );
+		return;
+	}
+
+	ZydisDecoder decoder;
+	ZydisDecoderInit( &decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64 );
+	ZydisDecodedInstruction instruction;
 
 	STACKFRAME64 stack_frame{ };
 
@@ -245,26 +257,11 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 				displacement = ( frame_return_address - image_base - lookup_entr->BeginAddress );
 		}
 
-		unsigned char og_instruction[ 8 ];
-		unsigned char previous_instruction[ 8 ];
-		if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - 6 ), &og_instruction, 8, nullptr ) )
+		unsigned char instruction_buffer[ 8 ];
+		if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - 6 ), &instruction_buffer, 8, nullptr ) )
 		{
-			if ( og_instruction[ 1 ] == 0xE8 )
-			{
-				int32_t dip = *reinterpret_cast< int32_t* >( og_instruction + 2 );
-				void* relative_address = reinterpret_cast< void* >( uintptr_t( frame_return_address ) + dip );
-				uintptr_t yup{ };
-				UNWIND_HISTORY_TABLE ok{ };
-				const auto function_entry = RtlLookupFunctionEntry( ( uintptr_t ) relative_address, &yup, &ok );
-				if ( function_entry && function_entry->BeginAddress + yup != last_function_address )
-				{
-					address_discrepancy = true;
-					printf( " (call address doesn't match)" );
-				}
-
-				// printf( " (previous instruction is a relative call)" );
-			}
-			else if ( og_instruction[ 0 ] == 0xFF )
+			ZydisDecodedOperand operands[ ZYDIS_MAX_OPERAND_COUNT ];
+			if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer, 8, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_CALL )
 			{
 				static auto base_thread_init_thunk = ( uintptr_t ) GetProcAddress( GetModuleHandleA( "kernel32" ), "BaseThreadInitThunk" );
 				static auto rtl_user_thread_start = ( uintptr_t ) GetProcAddress( GetModuleHandleA( "ntdll" ), "RtlUserThreadStart" );
@@ -278,67 +275,69 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 					continue;
 				}
 
-				void* called_address;
-				void* relative_address{ ( void* ) ( frame_return_address + *( ( unsigned int* ) ( og_instruction + 2 ) ) ) };
-				if ( ReadProcessMemory( process, ( LPCVOID ) ( relative_address ), &called_address, sizeof( void* ), nullptr ) )
-				{
-					if ( last_function_address && last_function_address != ( uintptr_t ) called_address )
-					{
-						if ( ReadProcessMemory( process, called_address, &previous_instruction, 6, nullptr ) && previous_instruction[ 0 ] == 0xFF )
-						{
-							/* __guard_check_icall_fptr */
-							if ( previous_instruction[ 1 ] == 0xE0 && frame_return_address == ( uintptr_t ) rtl_user_thread_start + 0x21 )
-							{
-								const auto buffer{ std::make_unique<uint8_t[ ]>( displacement ) };
-								if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - displacement ), buffer.get( ), displacement, nullptr ) )
-								{
-									DWORD rip{ };
-									DWORD rip_offset{ };
-									for ( ULONG i = 0; i < displacement; i++ )
-									{
-										if ( buffer[ i ] == 0x48 && buffer[ i + 1 ] == 0x8B && buffer[ i + 2 ] == 0x05 )
-										{
-											rip_offset = *( DWORD* ) ( buffer.get( ) + i + 3 );
-											rip = i + 7;
-										}
-									}
+				uintptr_t absolute_address{ };
+				ZydisCalcAbsoluteAddress( &instruction, operands, frame_return_address - 6, &absolute_address );
 
-									if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - displacement + rip + rip_offset ), &called_address, sizeof( void* ), nullptr ) )
+				/* hardcoded check for RtlUserThreadStart */
+				uintptr_t called_address;
+				if ( ReadProcessMemory( process, ( LPCVOID ) ( absolute_address ), &called_address, sizeof( uintptr_t ), nullptr ) )
+				{
+					unsigned char instruction_buffer_2[ 6 ];
+					if ( ReadProcessMemory( process, ( LPCVOID ) called_address, &instruction_buffer_2, 6, nullptr ) && instruction_buffer_2[ 0 ] == 0xFF )
+					{
+						if ( instruction_buffer_2[ 1 ] == 0xE0 && frame_return_address == ( uintptr_t ) rtl_user_thread_start + 0x21 )
+						{
+							const auto buffer{ std::make_unique<uint8_t[ ]>( displacement ) };
+							if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - displacement ), buffer.get( ), displacement, nullptr ) )
+							{
+								DWORD rip{ };
+								DWORD rip_offset{ };
+								for ( ULONG i = 0; i < displacement; i++ )
+								{
+									if ( buffer[ i ] == 0x48 && buffer[ i + 1 ] == 0x8B && buffer[ i + 2 ] == 0x05 )
 									{
-										if ( last_function_address != ( uintptr_t ) called_address )
-										{
-											printf( " (call address doesn't match)" );
-											address_discrepancy = true;
-										}
+										rip_offset = *( DWORD* ) ( buffer.get( ) + i + 3 );
+										rip = i + 7;
 									}
 								}
-							}
-							else
-							{
-								relative_address = ( void* ) ( ( ( uintptr_t ) called_address + 6 ) + *( ( unsigned int* ) ( previous_instruction + 2 ) ) );
-								if ( ReadProcessMemory( process, ( LPCVOID ) relative_address, &called_address, sizeof( void* ), nullptr ) )
-								{
-									if ( ReadProcessMemory( process, ( LPCVOID ) called_address, &previous_instruction, 2, nullptr ) )
-									{
-										/* __guard_xfg_dispatch_icall_fptr */
-										if ( previous_instruction[ 0 ] == 0xFF && previous_instruction[ 1 ] == 0xE0 )
-										{
 
-										}
+								if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - displacement + rip + rip_offset ), &called_address, sizeof( void* ), nullptr ) )
+								{
+									if ( last_function_address != ( uintptr_t ) called_address )
+									{
+										printf( " (call address doesn't match)" );
+										address_discrepancy = true;
 									}
 								}
 							}
 						}
 					}
 				}
-
-				// printf( " (previous instruction is a call)" );
+				
+				 // printf( " (previous instruction is a call)" );
 			}
-			else if ( og_instruction[ 4 ] == 0x0F && og_instruction[ 5 ] == 0x05 )
+			else if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 1, 8, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_CALL )
+			{
+				uintptr_t absolute_address{ };
+				if ( ZYAN_SUCCESS( ZydisCalcAbsoluteAddress( &instruction, operands, frame_return_address - 5, &absolute_address ) ) )
+				{
+					uintptr_t image_base{ };
+					UNWIND_HISTORY_TABLE history_table{ };
+					const auto function_entry = RtlLookupFunctionEntry( ( uintptr_t ) absolute_address, &image_base, &history_table );
+					if ( function_entry && function_entry->BeginAddress + image_base != last_function_address )
+					{
+						address_discrepancy = true;
+						printf( " (call address doesn't match)" );
+					}
+				}
+
+				 // printf( " (previous instruction is a relative call)" );
+			}
+			else if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 4, 8, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_SYSCALL )
 			{
 				// printf( " (previous instruction is a syscall)" );
 			}
-			else if ( og_instruction[ 3 ] == 0xFF || og_instruction[ 4 ] == 0xFF )
+			else if ( instruction_buffer[ 3 ] == 0xFF || instruction_buffer[ 4 ] == 0xFF )
 			{
 				// printf( " (previous instruction is a jmp to a register)" );
 			}
@@ -348,20 +347,55 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 				invalid_call = true;
 			}
 
-			if ( og_instruction[ 6 ] == 0xFF )
+			if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 6, 2, &instruction, operands ) ) )
 			{
-				uintptr_t jmp_address{ };
-				const auto deref_ok = *( void** ) context.Rbx;
-				if ( ReadProcessMemory( process, ( LPCVOID ) context.Rbx, &jmp_address, sizeof( uintptr_t ), nullptr ) )
+				if ( instruction.mnemonic == ZYDIS_MNEMONIC_JMP )
 				{
-					if ( !in_valid_module( jmp_address, GetProcessId( process ) ) )
+					/* jmp [reg] */
+					if ( operands[ 0 ].type == ZYDIS_OPERAND_TYPE_MEMORY )
 					{
-						printf( " (jmp to unbacked memory region)" );
-						unbacked_code = true;
+						switch ( operands[ 0 ].mem.base )
+						{
+							case ZYDIS_REGISTER_RBX:
+							{
+								uintptr_t rbx_address{ };
+								if ( ReadProcessMemory( process, ( LPCVOID ) context.Rbx, &rbx_address, sizeof( uintptr_t ), nullptr ) )
+								{
+									if ( !in_valid_module( rbx_address, GetProcessId( process ) ) )
+									{
+										printf( " (jmp to unbacked memory region)" );
+										unbacked_code = true;
+									}
+								}
+
+								// printf( " (jmp [rbx])" );
+								break;
+							}
+							default:
+								break;
+						}
+					}
+					/* jmp reg */
+					else if ( operands[ 0 ].type == ZYDIS_OPERAND_TYPE_REGISTER )
+					{
+						switch ( operands[ 0 ].reg.value )
+						{
+							case ZYDIS_REGISTER_RBX:
+							{
+								if ( !in_valid_module( context.Rbx, GetProcessId( process ) ) )
+								{
+									printf( " (jmp to unbacked memory region)" );
+									unbacked_code = true;
+								}
+
+								// printf( " (jmp rbx)" );
+								break;
+							}
+							default:
+								break;
+						}
 					}
 				}
-
-				// printf( " (possible cop/jop gadget)" );
 			}
 		}
 
