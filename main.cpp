@@ -1,5 +1,7 @@
 #include "includes.h"
 
+void call_msgbox( ){ MessageBoxA( NULL, "regular call", "title", MB_OK ); }
+
 int main( )
 {
 	const auto terminate = [ & ]( const char* msg, const bool success = false ) -> int
@@ -9,11 +11,12 @@ int main( )
 		return success ? 0 : 1;
 	};
 
-	LoadLibraryA( "user32" );
+	if ( !util::set_privilege( L"SeDebugPrivilege", TRUE ) )
+		return terminate( "could not set privilege" );
 
-	const auto user32_base = ( uintptr_t ) GetModuleHandleA( "user32" );
-	if ( !user32_base )
-		return terminate( "user32.dll not found" );
+	const auto kernelbase = ( uintptr_t ) GetModuleHandleA( "kernelbase" );
+	if ( !kernelbase )
+		return terminate( "kernelbase.dll not found" );
 
 	const auto kernel32_base = ( uintptr_t ) GetModuleHandleA( "kernel32" );
 	if ( !kernel32_base )
@@ -23,110 +26,128 @@ int main( )
 	if ( !ntdll_base )
 		return terminate( "ntdll.dll not found" );
 
-	const auto kernelbase = ( uintptr_t ) GetModuleHandleA( "kernelbase" );
-	if ( !kernelbase )
-		return terminate( "kernelbase.dll not found" );
+	const auto user32_base = ( uintptr_t ) LoadLibraryA( "user32.dll" );
+	if ( !user32_base )
+		return terminate( "user32.dll not found" );
 
 	const auto base_init_thread_thunk = ( uintptr_t ) GetProcAddress( ( HMODULE ) kernel32_base, "BaseThreadInitThunk" );
 	const auto rtl_user_thread_start = ( uintptr_t ) GetProcAddress( ( HMODULE ) ntdll_base, "RtlUserThreadStart" );
-	
-	{
-		DWORD64 stack_size{ };
+	const auto message_box_a = ( uintptr_t ) GetProcAddress( ( HMODULE ) user32_base, "MessageBoxA" );
 
-		if ( !uw::virtual_unwind( kernel32_base, &base_init_thread_thunk, uw::LOG_RESULTS, "BaseThreadInitThunk", &stack_size ) )
-			return terminate( "virtual_unwind failed for BaseThreadInitThunk" );
+	DWORD64 ss1{ };
+	if ( !uw::query_unwind_info( kernel32_base, &base_init_thread_thunk, uw::LOG_VERBOSE, &ss1 ) )
+		return terminate( "virtual_unwind failed for BaseThreadInitThunk" );
 
-		if ( stack_size != BaseThreadInitThunkStackSize )
-			return terminate( "incorrect BaseThreadInitThunkStackSize stack size resolve" );
+	DWORD64 ss2{ };
+	if ( !uw::query_unwind_info( ntdll_base, &rtl_user_thread_start, uw::LOG_VERBOSE, &ss2 ) )
+		return terminate( "virtual_unwind failed for RtlUserThreadStart" );
 
-		if ( !uw::virtual_unwind( ntdll_base, &rtl_user_thread_start, uw::LOG_RESULTS, "RtlUserThreadStart", &stack_size ) )
-			return terminate( "virtual_unwind failed for RtlUserThreadStart" );
-
-		if ( stack_size != RtlUserThreadStartStackSize )
-			return terminate( "incorrect RtlUserThreadStart stack size resolve" );
-	}
+	DWORD64 ss3{ };
+	if ( !uw::query_unwind_info( user32_base, &message_box_a, uw::LOG_VERBOSE, &ss3 ) )
+		return terminate( "virtual_unwind failed for MessageBoxA" );
 
 	uw::operation uwop{ };
 
-	/* first frame (mov rbp, rsp) */
+	/*
+	* ---------------------------------------------------------
+	* mov rbp, rsp
+	* ---------------------------------------------------------
+	*/
 
-	DWORD64 f1_stack_size{ };
 	uwop.op_code = UWOP_SET_FPREG;
 	uwop.op_register = RBP;
 
-	const auto f1_address = uw::virtual_unwind( kernelbase, nullptr, uw::LOG_DISABLED, nullptr, &f1_stack_size, &uwop );
-	if ( !f1_address )
-		return terminate( "could not locate first frame" );
+	DWORD64 mov_rbp_rsp_size{ };
+	const auto mov_rbp_rsp{ uw::query_unwind_info( kernelbase, nullptr, uw::LOG_VERBOSE, &mov_rbp_rsp_size, &uwop ) };
+	if ( !mov_rbp_rsp )
+		return terminate( "mov rbp, rsp not found" );
 
-	printf( "first frame address: 0x%p\n", f1_address );
-	printf( "first frame stack size: %llu\n", f1_stack_size );
+	/*
+	* ---------------------------------------------------------
+	* push rbp
+	* ---------------------------------------------------------
+	*/
 
-	/* second frame (push rbp) */
-
-	DWORD64 f2_stack_size{ };
 	uwop.op_code = UWOP_PUSH_NONVOL;
 	uwop.op_register = RBP;
 
-	const auto f2_address = uw::virtual_unwind( kernelbase, nullptr, uw::LOG_DISABLED, nullptr, &f2_stack_size, &uwop );
-	if ( !f2_address )
-		return terminate( "could not locate second frame" );
+	DWORD64 push_rbp_size{ };
+	const auto push_rbp{ uw::query_unwind_info( kernelbase, nullptr, uw::LOG_VERBOSE, &push_rbp_size, &uwop ) };
+	if ( !push_rbp )
+		return terminate( "push rbp not found" );
 
 	const auto push_rbp_offset = uwop.offset;
 
-	printf( "second frame address: 0x%p\n", f2_address );
-	printf( "second frame stack size: %llu\n", f2_stack_size );
-	printf( "push rbp offset: %llu\n", push_rbp_offset );
-
-	/* third frame (jmp rbx gadget) */
+	/*
+	* ---------------------------------------------------------
+	* jmp rbx
+	* ---------------------------------------------------------
+	*/
 
 	uw::sig_scan gadget_sig{ };
 	gadget_sig.pattern = "FF 23";
 	gadget_sig.return_type = uw::sig_scan::DIRECT_ADDRESS;
 
-	DWORD64 gadget_stack_size{ };
-	const auto gadget = uw::virtual_unwind( kernelbase, nullptr, uw::LOG_DISABLED, nullptr, &gadget_stack_size, nullptr, &gadget_sig );
+	DWORD64 gadget_size{ };
+	const auto gadget{ uw::query_unwind_info( kernelbase, nullptr, uw::LOG_VERBOSE, &gadget_size, nullptr, &gadget_sig ) };
 	if ( !gadget )
-		return terminate( "gadget not found" );
+		return terminate( "jmp rbx not found" );
 
-	printf( "gadget address: 0x%p\n", gadget );
-	printf( "stack size: %llu\n", gadget_stack_size );
-
-	/* fourth frame (add rsp) */
-
-	uw::sig_scan gadget2_sig{ };
-	gadget2_sig.pattern = "48 83 C4 38 C3";
-	gadget2_sig.return_type = uw::sig_scan::DIRECT_ADDRESS;
-
-	DWORD64 gadget2_stack_size{ };
-	const auto gadget2 = uw::virtual_unwind( kernelbase, nullptr, uw::LOG_DISABLED, nullptr, &gadget2_stack_size, nullptr, &gadget2_sig );
-	if ( !gadget2 )
-		return terminate( "gadget2 not found" );
-
-	printf( "gadget address: 0x%p\n", gadget2 );
-	printf( "stack size: %llu\n", gadget2_stack_size );
-
-	spoof_info config;
-	config.target_function = ( PVOID ) GetProcAddress( ( HMODULE ) user32_base, "MessageBoxA" );
-	config.num_args = 4;
-	config.arg1 = NULL;
-	config.arg2 = ( PVOID ) & "hello, world!";
-	config.arg3 = ( PVOID ) & "title";
-	config.arg4 = MB_OK;
+	spoof_info config{ };
+	config.add_rsp_gadget = ( PVOID ) ( message_box_a + 0x4e );
+	config.add_rsp_gadget_frame_size = ss3;
+	config.arbitrary_frame = ( PVOID ) ( rtl_user_thread_start + 0x21 );
+	config.arbitrary_frame_size = ss2;
+	config.target_function = ( PVOID ) MessageBoxA;
 	config.return_address = ( PVOID ) _AddressOfReturnAddress( );
-	config.set_fpreg_frame = ( PVOID ) f1_address;
-	config.set_fpreg_frame_size = f1_stack_size;
-	config.push_rbp_frame = ( PVOID ) f2_address;
-	config.push_rbp_frame_size = f2_stack_size;
 	config.push_rbp_offset = push_rbp_offset;
+	config.set_fpreg_frame = ( PVOID ) ( mov_rbp_rsp );
+	config.set_fpreg_frame_size = mov_rbp_rsp_size;
+	config.push_rbp_frame = ( PVOID ) ( push_rbp );
+	config.push_rbp_frame_size = push_rbp_size;
 	config.jmp_rbx_gadget = ( PVOID ) gadget;
-	config.jmp_rbx_gadget_frame_size = gadget_stack_size;
-	config.add_rsp_gadget = ( PVOID ) gadget2;
-	config.add_rsp_gadget_frame_size = gadget2_stack_size;
+	config.jmp_rbx_gadget_frame_size = gadget_size;
+	config.arg1 = ( PVOID ) NULL;
+	config.arg2 = ( PVOID ) "spoofed call";
+	config.arg3 = ( PVOID ) "title";
+	config.arg4 = ( PVOID ) MB_OK;
 
-	config.set_fpreg_frame_random_offset = 137;
-	config.push_rbp_frame_random_offset = 30;
+	getchar( );
 
-	spoof_call( &config );
+	const HANDLE process_snapshot{ CreateToolhelp32Snapshot( TH32CS_SNAPPROCESS, 0 ) };
+	if ( process_snapshot == INVALID_HANDLE_VALUE )
+		return terminate( "invalid snapshot handle" );
+
+	PROCESSENTRY32 process_entry{ };
+	process_entry.dwSize = sizeof( PROCESSENTRY32 );
+
+	if ( Process32First( process_snapshot, &process_entry ) )
+	{
+		const HANDLE thread_snapshot{ CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 ) };
+		if ( thread_snapshot != INVALID_HANDLE_VALUE )
+		{
+			THREADENTRY32 thread_entry{ };
+			thread_entry.dwSize = sizeof( THREADENTRY32 );
+
+			do
+			{
+				if ( Thread32First( thread_snapshot, &thread_entry ) )
+				{
+					do
+					{
+						if ( thread_entry.th32OwnerProcessID == process_entry.th32ProcessID )
+							uw::stack_walk( process_entry.th32ProcessID, thread_entry.th32ThreadID );
+
+					} while ( Thread32Next( thread_snapshot, &thread_entry ) );
+				}
+
+			} while ( Process32Next( process_snapshot, &process_entry ) );
+
+			CloseHandle( thread_snapshot );
+		}
+	}
+
+	CloseHandle( process_snapshot );
 
 	return terminate( "success", true );
 }

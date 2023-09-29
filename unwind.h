@@ -31,11 +31,17 @@
 
 namespace uw
 {
+	namespace internal
+	{
+		void translate_register( UBYTE op_info, char* register_name );
+		bool load_process_symbols( const HANDLE process );
+	}
+
 	enum log
 	{
 		LOG_DISABLED = ( 1 << 0 ), /* don't print anything (default) */
-		LOG_RESULTS = ( 1 << 1 ), /* print errors/output info */
-		LOG_OPCODES = ( 1 << 2 ), /* print unwind operation codes */
+		LOG_RESULTS = ( 1 << 1 ), /* print output info and errors */
+		LOG_OPCODES = ( 1 << 2 ), /* print unwind operations */
 		LOG_VERBOSE = ( LOG_RESULTS | LOG_OPCODES )
 	};
 
@@ -44,7 +50,7 @@ namespace uw
 		UBYTE op_code;
 		UBYTE op_register;
 		
-		/* only for output */
+		/* reserved for output */
 		DWORD64 offset;
 	};
 
@@ -58,23 +64,30 @@ namespace uw
 
 		const char* pattern;
 		address_type return_type = DIRECT_ADDRESS;
-
 	};
 
-	void translate_register( UBYTE op_info, char* register_name );
 
 	/*
-	* unwinds a function by enumerating through its associated uwop info/codes and dynamically calculating its stack size and return address offset
+	* unwinds entries in the runtime function table through emulation of RtlVirtualUnwind.
+	* can be used to search for a function with a specific signature or unwind operation.
 	* 
 	* @param [in] base address of module/process
 	* @param [in, optional] base address of function
 	* @param [in, optional] logging
-	* @param [in, optional] function name
 	* @param [in, out, optional] stack size
 	* @param [in, out, optional] desired uwop
 	* @param [in, optional] signature to scan
 	* 
-	* @return address of fuction, if found to meet search parameters
+	* @return address of function, if found to meet search parameters
 	*/
-	uintptr_t virtual_unwind( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, const char* function_name = nullptr, DWORD64* stack_size = nullptr, operation* uwop = nullptr, const sig_scan* signature_scan = nullptr );
+	uintptr_t query_unwind_info( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, DWORD64* stack_size = nullptr, operation* uwop = nullptr, const sig_scan* signature_scan = nullptr );
+
+	/* walks the callstack of the running thread */
+	void stack_walk( );
+
+	/* walks the callstack of a specified <process_id, thread_id> pair */
+	void stack_walk( const DWORD pid, const DWORD tid );
+
+	/* walks the callstack of a specified <process_handle, thread_handle> pair */
+	void stack_walk( const HANDLE process, const HANDLE thread );
 }

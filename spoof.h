@@ -18,6 +18,9 @@ struct spoof_info
 	PVOID add_rsp_gadget;
 	UINT64 add_rsp_gadget_frame_size;
 
+	PVOID arbitrary_frame;
+	UINT64 arbitrary_frame_size;
+
 	PVOID target_function;
 	PVOID return_address;
 
@@ -33,3 +36,4 @@ struct spoof_info
 };
 
 EXTERN_C PVOID spoof_call( spoof_info* config );
+EXTERN_C PVOID experimental_spoof( spoof_info* config );

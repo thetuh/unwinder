@@ -41,9 +41,15 @@
     <ClInclude Include="spoof.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="tinyformat.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="spoof.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="experimental.asm">
       <Filter>Source Files</Filter>
     </MASM>
   </ItemGroup>

@@ -1,6 +1,37 @@
 #include "includes.h"
 #include <unordered_map>
 
+bool util::set_privilege( LPCWSTR privilege, BOOL enable_privilege )
+{
+    TOKEN_PRIVILEGES priv = { 0,0,0,0 };
+    HANDLE token = NULL;
+    LUID luid = { 0,0 };
+    if ( !OpenProcessToken( GetCurrentProcess( ), TOKEN_ADJUST_PRIVILEGES, &token ) )
+    {
+        if ( token )
+            CloseHandle( token );
+        return false;
+    }
+    if ( !LookupPrivilegeValueW( 0, privilege, &luid ) )
+    {
+        if ( token )
+            CloseHandle( token );
+        return false;
+    }
+    priv.PrivilegeCount = 1;
+    priv.Privileges[ 0 ].Luid = luid;
+    priv.Privileges[ 0 ].Attributes = enable_privilege ? SE_PRIVILEGE_ENABLED : SE_PRIVILEGE_REMOVED;
+    if ( !AdjustTokenPrivileges( token, false, &priv, 0, 0, 0 ) )
+    {
+        if ( token )
+            CloseHandle( token );
+        return false;
+    }
+    if ( token )
+        CloseHandle( token );
+    return true;
+}
+
 bool util::pattern_to_bytes( const char* pattern, std::vector<int>& bytes ) noexcept
 {
     bytes.clear( );
