@@ -114,40 +114,17 @@ int main( )
 
 	getchar( );
 
-	const HANDLE process_snapshot{ CreateToolhelp32Snapshot( TH32CS_SNAPPROCESS, 0 ) };
-	if ( process_snapshot == INVALID_HANDLE_VALUE )
-		return terminate( "invalid snapshot handle" );
+	const HANDLE thread_snapshot{ CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 ) };
+	if ( thread_snapshot == INVALID_HANDLE_VALUE )
+		return terminate( "could not retrieve open thread snapshot" );
 
-	PROCESSENTRY32 process_entry{ };
-	process_entry.dwSize = sizeof( PROCESSENTRY32 );
+	THREADENTRY32 thread_entry{ };
+	thread_entry.dwSize = sizeof( THREADENTRY32 );
 
-	if ( Process32First( process_snapshot, &process_entry ) )
-	{
-		const HANDLE thread_snapshot{ CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 ) };
-		if ( thread_snapshot != INVALID_HANDLE_VALUE )
-		{
-			THREADENTRY32 thread_entry{ };
-			thread_entry.dwSize = sizeof( THREADENTRY32 );
+	if ( Thread32First( thread_snapshot, &thread_entry ) )
+		do { uw::stack_walk( thread_entry.th32OwnerProcessID, thread_entry.th32ThreadID ); } while ( Thread32Next( thread_snapshot, &thread_entry ) );
 
-			do
-			{
-				if ( Thread32First( thread_snapshot, &thread_entry ) )
-				{
-					do
-					{
-						if ( thread_entry.th32OwnerProcessID == process_entry.th32ProcessID )
-							uw::stack_walk( process_entry.th32ProcessID, thread_entry.th32ThreadID );
-
-					} while ( Thread32Next( thread_snapshot, &thread_entry ) );
-				}
-
-			} while ( Process32Next( process_snapshot, &process_entry ) );
-
-			CloseHandle( thread_snapshot );
-		}
-	}
-
-	CloseHandle( process_snapshot );
+	CloseHandle( thread_snapshot );
 
 	return terminate( "success", true );
 }

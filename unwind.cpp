@@ -183,235 +183,214 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 	CONTEXT context{ };
 	context.ContextFlags = CONTEXT_FULL;
 
-	if ( GetThreadContext( thread, &context ) && internal::load_process_symbols( process ) )
+	if ( !GetThreadContext( thread, &context ) || !internal::load_process_symbols( process ) )
 	{
-		/* "If you call GetThreadContext for the current thread, the function returns successfully; however, the context returned is not valid." */
-		//if ( tid == GetCurrentThreadId( ) )
-		//	RtlCaptureContext( &context );
+		printf( "[stack_walk] error: failed to get thread context\n" );
+		return;
+	}
 
-		STACKFRAME64 stack_frame{ };
+	STACKFRAME64 stack_frame{ };
 
-		stack_frame.AddrPC.Mode = AddrModeFlat;
-		stack_frame.AddrFrame.Mode = AddrModeFlat;
-		stack_frame.AddrStack.Mode = AddrModeFlat;
+	stack_frame.AddrPC.Mode = AddrModeFlat;
+	stack_frame.AddrFrame.Mode = AddrModeFlat;
+	stack_frame.AddrStack.Mode = AddrModeFlat;
 
-		stack_frame.AddrPC.Offset = context.Rip;
-		stack_frame.AddrFrame.Offset = context.Rsp;
-		stack_frame.AddrStack.Offset = context.Rsp;
+	stack_frame.AddrPC.Offset = context.Rip;
+	stack_frame.AddrFrame.Offset = context.Rsp;
+	stack_frame.AddrStack.Offset = context.Rsp;
 
-		WORD frame_count{ };
-		bool unbacked_code{ false };
-		bool invalid_call{ false };
-		bool address_discrepancy{ false };
+	WORD frame_count{ };
+	bool unbacked_code{ false };
+	bool invalid_call{ false };
+	bool address_discrepancy{ false };
 
-		uintptr_t last_function_address{ };
+	uintptr_t last_function_address{ };
 
-		while ( StackWalk64(
-			IMAGE_FILE_MACHINE_AMD64,
-			process,
-			thread,
-			&stack_frame,
-			&context,
-			NULL,
-			SymFunctionTableAccess64,
-			SymGetModuleBase64,
-			NULL ) )
+	while ( StackWalk64(
+		IMAGE_FILE_MACHINE_AMD64,
+		process,
+		thread,
+		&stack_frame,
+		&context,
+		NULL,
+		SymFunctionTableAccess64,
+		SymGetModuleBase64,
+		NULL ) )
+	{
+		const auto frame_return_address = stack_frame.AddrPC.Offset;
+		DWORD64 displacement{ };
+
+		IMAGEHLP_MODULE64 module_info = { sizeof( IMAGEHLP_MODULE64 ) };
+		if ( SymGetModuleInfo64( process, frame_return_address, &module_info ) )
 		{
-			const auto frame_return_address = stack_frame.AddrPC.Offset;
-			DWORD64 displacement{ };
+			BYTE buffer[ sizeof( SYMBOL_INFO ) + MAX_SYM_NAME * sizeof( TCHAR ) ];
+			const PSYMBOL_INFO symbol = ( PSYMBOL_INFO ) buffer;
+			symbol->SizeOfStruct = sizeof( SYMBOL_INFO );
+			symbol->MaxNameLen = MAX_SYM_NAME;
 
-			IMAGEHLP_MODULE64 module_info = { sizeof( IMAGEHLP_MODULE64 ) };
-			if ( SymGetModuleInfo64( process, frame_return_address, &module_info ) )
-			{
-				BYTE buffer[ sizeof( SYMBOL_INFO ) + MAX_SYM_NAME * sizeof( TCHAR ) ];
-				const PSYMBOL_INFO symbol = ( PSYMBOL_INFO ) buffer;
-				symbol->SizeOfStruct = sizeof( SYMBOL_INFO );
-				symbol->MaxNameLen = MAX_SYM_NAME;
-
-				if ( SymFromAddr( process, frame_return_address, &displacement, symbol ) )
-					printf( " %hu, %s!%s+0x%llx", frame_count, ( strrchr( module_info.ImageName, '\\' ) + 1 ), symbol->Name, displacement );
-				else
-					printf( " %hu, %s+0x%llx", frame_count, ( strrchr( module_info.ImageName, '\\' ) + 1 ), ( frame_return_address - module_info.BaseOfImage ) );
-			}
+			if ( SymFromAddr( process, frame_return_address, &displacement, symbol ) )
+				printf( " %hu, %s!%s+0x%llx", frame_count, ( strrchr( module_info.ImageName, '\\' ) + 1 ), symbol->Name, displacement );
 			else
-			{
-				printf( " %hu, 0x%llx (invalid module)", frame_count, frame_return_address );
-				unbacked_code = true;
-			}
+				printf( " %hu, %s+0x%llx", frame_count, ( strrchr( module_info.ImageName, '\\' ) + 1 ), ( frame_return_address - module_info.BaseOfImage ) );
+		}
+		else
+		{
+			printf( " %hu, 0x%llx (invalid module)", frame_count, frame_return_address );
+			unbacked_code = true;
+		}
 
-			{
-				DWORD64 image_base{ };
-				UNWIND_HISTORY_TABLE history_table{ };
-				if ( const auto lookup_entr = RtlLookupFunctionEntry( frame_return_address, &image_base, &history_table ); lookup_entr )
-					displacement = ( frame_return_address - image_base - lookup_entr->BeginAddress );
-			}
+		{
+			DWORD64 image_base{ };
+			UNWIND_HISTORY_TABLE history_table{ };
+			if ( const auto lookup_entr = RtlLookupFunctionEntry( frame_return_address, &image_base, &history_table ); lookup_entr )
+				displacement = ( frame_return_address - image_base - lookup_entr->BeginAddress );
+		}
 
-			unsigned char og_instruction[ 8 ];
-			unsigned char previous_instruction[ 8 ];
-			if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - 6 ), &og_instruction, 8, nullptr ) )
+		unsigned char og_instruction[ 8 ];
+		unsigned char previous_instruction[ 8 ];
+		if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - 6 ), &og_instruction, 8, nullptr ) )
+		{
+			if ( og_instruction[ 1 ] == 0xE8 )
 			{
-				if ( og_instruction[ 1 ] == 0xE8 )
+				int32_t dip = *reinterpret_cast< int32_t* >( og_instruction + 2 );
+				void* relative_address = reinterpret_cast< void* >( uintptr_t( frame_return_address ) + dip );
+				uintptr_t yup{ };
+				UNWIND_HISTORY_TABLE ok{ };
+				const auto function_entry = RtlLookupFunctionEntry( ( uintptr_t ) relative_address, &yup, &ok );
+				if ( function_entry && function_entry->BeginAddress + yup != last_function_address )
 				{
-					int32_t dip = *reinterpret_cast< int32_t* >( og_instruction + 2 );
-					void* relative_address = reinterpret_cast< void* >( uintptr_t( frame_return_address ) + dip );
-					uintptr_t yup{ };
-					UNWIND_HISTORY_TABLE ok{ };
-					const auto function_entry = RtlLookupFunctionEntry( ( uintptr_t ) relative_address, &yup, &ok );
-					if ( function_entry && function_entry->BeginAddress + yup != last_function_address )
-					{
-						address_discrepancy = true;
-						printf( " (call address doesn't match)" );
-					}
-
-					//printf( " (previous instruction is a relative call)" );
+					address_discrepancy = true;
+					printf( " (call address doesn't match)" );
 				}
-				else if ( og_instruction[ 0 ] == 0xFF )
+
+				// printf( " (previous instruction is a relative call)" );
+			}
+			else if ( og_instruction[ 0 ] == 0xFF )
+			{
+				/* no reliable way of checking this function (that i know of) */
+				static auto base_thread_init_thunk = ( uintptr_t ) GetProcAddress( GetModuleHandleA( "kernel32" ), "BaseThreadInitThunk" );
+				static auto rtl_user_thread_start = ( uintptr_t ) GetProcAddress( GetModuleHandleA( "ntdll" ), "RtlUserThreadStart" );
+				if ( frame_return_address == base_thread_init_thunk + 0x14 )
 				{
-					//const auto nt_header{ ( PIMAGE_NT_HEADERS ) ( module_info.BaseOfImage + PIMAGE_DOS_HEADER( module_info.BaseOfImage )->e_lfanew ) };
-					//const auto load_config{ ( PIMAGE_LOAD_CONFIG_DIRECTORY ) ( ( DWORD_PTR ) module_info.BaseOfImage + nt_header->OptionalHeader.DataDirectory[ IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG ].VirtualAddress ) };
-					//const PVOID function_table{ PVOID( load_config->GuardCFFunctionTable ) };
-					//const DWORD entry_size = sizeof( DWORD ) + ( ( load_config->GuardFlags & IMAGE_GUARD_CF_FUNCTION_TABLE_SIZE_MASK ) >> IMAGE_GUARD_CF_FUNCTION_TABLE_SIZE_SHIFT );
-					//
-					//for ( size_t i = 0; i < load_config->GuardCFFunctionCount; ++i )
-					//{
-					//	DWORD rva{};
-					//	memcpy( &rva, ( BYTE* ) function_table + i * entry_size, 4 );
+					last_function_address = base_thread_init_thunk;
+					frame_count++;
+					printf( "\n" );
+					continue;
+				}
 
-					//	if ( ( frame_return_address - displacement ) == ( module_info.BaseOfImage + rva ) )
-					//		printf( " nice!" );
-					//}
-
-					/* no reliable way of checking this function (that i know of) */
-					static auto base_thread_init_thunk = ( uintptr_t ) GetProcAddress( GetModuleHandleA( "kernel32" ), "BaseThreadInitThunk" );
-					static auto rtl_user_thread_start = ( uintptr_t ) GetProcAddress( GetModuleHandleA( "ntdll" ), "RtlUserThreadStart" );
-					if ( frame_return_address == base_thread_init_thunk + 0x14 )
+				void* called_address;
+				void* relative_address{ ( void* ) ( frame_return_address + *( ( unsigned int* ) ( og_instruction + 2 ) ) ) };
+				if ( ReadProcessMemory( process, ( LPCVOID ) ( relative_address ), &called_address, sizeof( void* ), nullptr ) )
+				{
+					if ( last_function_address && last_function_address != ( uintptr_t ) called_address )
 					{
-						last_function_address = base_thread_init_thunk;
-						frame_count++;
-						printf( "\n" );
-						continue;
-					}
-
-					void* called_address;
-					void* relative_address{ ( void* ) ( frame_return_address + *( ( unsigned int* ) ( og_instruction + 2 ) ) ) };
-					if ( ReadProcessMemory( process, ( LPCVOID ) ( relative_address ), &called_address, sizeof( void* ), nullptr ) )
-					{
-						if ( last_function_address && last_function_address != ( uintptr_t ) called_address )
+						if ( ReadProcessMemory( process, called_address, &previous_instruction, 6, nullptr ) && previous_instruction[ 0 ] == 0xFF )
 						{
-							if ( ReadProcessMemory( process, called_address, &previous_instruction, 6, nullptr ) && previous_instruction[ 0 ] == 0xFF )
+							/* __guard_check_icall_fptr */
+							if ( previous_instruction[ 1 ] == 0xE0 && frame_return_address == ( uintptr_t ) rtl_user_thread_start + 0x21 )
 							{
-								/* __guard_check_icall_fptr */
-								if ( previous_instruction[ 1 ] == 0xE0 && frame_return_address == ( uintptr_t ) rtl_user_thread_start + 0x21 )
+								const auto buffer{ std::make_unique<uint8_t[ ]>( displacement ) };
+								if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - displacement ), buffer.get( ), displacement, nullptr ) )
 								{
-									//printf( " (jmp rax)" );
-
-
-									const auto buffer{ std::make_unique<uint8_t[ ]>( displacement ) };
-									if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - displacement ), buffer.get( ), displacement, nullptr ) )
+									DWORD rip{ };
+									DWORD rip_offset{ };
+									for ( ULONG i = 0; i < displacement; i++ )
 									{
-										DWORD rip{ };
-										DWORD rip_offset{ };
-										for ( ULONG i = 0; i < displacement; i++ )
+										if ( buffer[ i ] == 0x48 && buffer[ i + 1 ] == 0x8B && buffer[ i + 2 ] == 0x05 )
 										{
-											if ( buffer[ i ] == 0x48 && buffer[ i + 1 ] == 0x8B && buffer[ i + 2 ] == 0x05 )
-											{
-												rip_offset = *( DWORD* ) ( buffer.get( ) + i + 3 );
-												rip = i + 7;
-											}
+											rip_offset = *( DWORD* ) ( buffer.get( ) + i + 3 );
+											rip = i + 7;
 										}
+									}
 
-										if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - displacement + rip + rip_offset ), &called_address, sizeof( void* ), nullptr ) )
+									if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - displacement + rip + rip_offset ), &called_address, sizeof( void* ), nullptr ) )
+									{
+										if ( last_function_address != ( uintptr_t ) called_address )
 										{
-											if ( last_function_address != ( uintptr_t ) called_address )
-											{
-												printf( " (call address doesn't match)" );
-												address_discrepancy = true;
-											}
+											printf( " (call address doesn't match)" );
+											address_discrepancy = true;
 										}
 									}
 								}
-								else
+							}
+							else
+							{
+								relative_address = ( void* ) ( ( ( uintptr_t ) called_address + 6 ) + *( ( unsigned int* ) ( previous_instruction + 2 ) ) );
+								if ( ReadProcessMemory( process, ( LPCVOID ) relative_address, &called_address, sizeof( void* ), nullptr ) )
 								{
-									relative_address = ( void* ) ( ( ( uintptr_t ) called_address + 6 ) + *( ( unsigned int* ) ( previous_instruction + 2 ) ) );
-									if ( ReadProcessMemory( process, ( LPCVOID ) relative_address, &called_address, sizeof( void* ), nullptr ) )
+									if ( ReadProcessMemory( process, ( LPCVOID ) called_address, &previous_instruction, 2, nullptr ) )
 									{
-										if ( ReadProcessMemory( process, ( LPCVOID ) called_address, &previous_instruction, 2, nullptr ) )
+										/* __guard_xfg_dispatch_icall_fptr */
+										if ( previous_instruction[ 0 ] == 0xFF && previous_instruction[ 1 ] == 0xE0 )
 										{
-											/* __guard_xfg_dispatch_icall_fptr */
-											if ( previous_instruction[ 0 ] == 0xFF && previous_instruction[ 1 ] == 0xE0 )
-											{
-												//printf( " (__guard_xfg_dispatch_icall_fptr)" );
 
-
-											}
 										}
 									}
 								}
 							}
 						}
 					}
-
-					//printf( " (previous instruction is a call)" );
-				}
-				else if ( og_instruction[ 4 ] == 0x0F && og_instruction[ 5 ] == 0x05 )
-				{
-					//printf( " (previous instruction is a syscall)" );
-				}
-				else if ( og_instruction[ 3 ] == 0xFF || og_instruction[ 4 ] == 0xFF )
-				{
-					// printf( " (previous instruction is a jmp to a register)" );
-				}
-				else
-				{
-					printf( " (no call found)" );
-					invalid_call = true;
 				}
 
-				if ( og_instruction[ 6 ] == 0xFF )
-				{
-					uintptr_t jmp_address{ };
-					const auto deref_ok = *( void** ) context.Rbx;
-					if ( ReadProcessMemory( process, ( LPCVOID ) context.Rbx, &jmp_address, sizeof( uintptr_t ), nullptr ) )
-					{
-						if ( !in_valid_module( jmp_address, GetProcessId( process ) ) )
-						{
-							printf( " (jmp to unbacked memory region)" );
-							unbacked_code = true;
-						}
-					}
-
-					// printf( " (possible cop/jop gadget)" );
-				}
+				// printf( " (previous instruction is a call)" );
+			}
+			else if ( og_instruction[ 4 ] == 0x0F && og_instruction[ 5 ] == 0x05 )
+			{
+				// printf( " (previous instruction is a syscall)" );
+			}
+			else if ( og_instruction[ 3 ] == 0xFF || og_instruction[ 4 ] == 0xFF )
+			{
+				// printf( " (previous instruction is a jmp to a register)" );
+			}
+			else
+			{
+				printf( " (no call found)" );
+				invalid_call = true;
 			}
 
+			if ( og_instruction[ 6 ] == 0xFF )
+			{
+				uintptr_t jmp_address{ };
+				const auto deref_ok = *( void** ) context.Rbx;
+				if ( ReadProcessMemory( process, ( LPCVOID ) context.Rbx, &jmp_address, sizeof( uintptr_t ), nullptr ) )
+				{
+					if ( !in_valid_module( jmp_address, GetProcessId( process ) ) )
+					{
+						printf( " (jmp to unbacked memory region)" );
+						unbacked_code = true;
+					}
+				}
+
+				// printf( " (possible cop/jop gadget)" );
+			}
+		}
+
+		DWORD64 image_base{ };
+		UNWIND_HISTORY_TABLE history_table{ };
+		const auto function_entry = RtlLookupFunctionEntry( frame_return_address, &image_base, &history_table );
+		if ( function_entry )
+			last_function_address = image_base + function_entry->BeginAddress;
+		else
 			last_function_address = frame_return_address - displacement;
-			DWORD64 image_base{ };
-			UNWIND_HISTORY_TABLE history_table{ };
-			const auto function_entry = RtlLookupFunctionEntry( frame_return_address, &image_base, &history_table );
-			if ( function_entry )
-				last_function_address = image_base + function_entry->BeginAddress;
 
-			printf( "\n" );
+		printf( "\n" );
 
-			frame_count++;
-		}
-
-		if ( unbacked_code || invalid_call || address_discrepancy )
-		{
-			printf( "\nwarning: possible stack tampering detected\n" );
-
-			if ( unbacked_code )
-				printf( " * found code in unbacked memory region\n" );
-			if ( invalid_call )
-				printf( " * found return address with no previous call\n" );
-			if ( address_discrepancy )
-				printf( " * found call address discrepancy\n" );
-		}
-
-		SymCleanup( process );
+		frame_count++;
 	}
-	else
-		printf( "[stack_walk] error: failed to get thread context\n" );
+
+	if ( unbacked_code || invalid_call || address_discrepancy )
+	{
+		printf( "\nwarning: possible stack tampering detected\n" );
+
+		if ( unbacked_code )
+			printf( " * found code in unbacked memory region\n" );
+		if ( invalid_call )
+			printf( " * found return address with no previous call\n" );
+		if ( address_discrepancy )
+			printf( " * found call address discrepancy\n" );
+	}
+
+	SymCleanup( process );
 }
 
 uintptr_t uw::query_unwind_info( const uintptr_t image_base, const uintptr_t* function_address, const log logging, DWORD64* stack_size, operation* uwop, const sig_scan* signature_scan )
