@@ -324,10 +324,23 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 					uintptr_t image_base{ };
 					UNWIND_HISTORY_TABLE history_table{ };
 					const auto function_entry = RtlLookupFunctionEntry( ( uintptr_t ) absolute_address, &image_base, &history_table );
-					if ( function_entry && function_entry->BeginAddress + image_base != last_function_address )
+					if ( function_entry && ( function_entry->BeginAddress + image_base ) != last_function_address )
 					{
-						address_discrepancy = true;
-						printf( " (call address doesn't match)" );
+						/* call address doesn't match, fall back to checking if both functions operate within the same stack frame */
+						DWORD64 stack_size{ };
+						if ( query_unwind_info( image_base, &last_function_address, LOG_DISABLED, &stack_size ) )
+						{
+							if ( stack_size )
+							{
+								address_discrepancy = true;
+								printf( " (call address doesn't match)" );
+							}
+						}
+						else
+						{
+							address_discrepancy = true;
+							printf( " (call address doesn't match)" );
+						}
 					}
 				}
 

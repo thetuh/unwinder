@@ -128,8 +128,5 @@ int main( )
 
 	CloseHandle( thread_snapshot );
 
-	//uw::stack_walk( GetCurrentProcessId( ), tid );
-	//uw::stack_walk( 14076, 6084 );
-
 	return terminate( "success", true );
 }
