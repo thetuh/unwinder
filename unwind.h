@@ -67,19 +67,18 @@ namespace uw
 	};
 
 
-	/*
-	* unwinds entries in the runtime function table through emulation of RtlVirtualUnwind.
-	* can be used to search for a function with a specific signature or unwind operation.
-	* 
-	* @param [in] base address of module/process
-	* @param [in, optional] base address of function
-	* @param [in, optional] logging
-	* @param [in, out, optional] stack size
-	* @param [in, out, optional] desired uwop
-	* @param [in, optional] signature to scan
-	* 
-	* @return address of function, if found to meet search parameters
-	*/
+	/**
+	 * search for a function with a specific signature or unwind operation
+	 * 
+	 * @param	image_base [in] base address of module/process
+	 * @param   function_address [in, optional] base address of function
+	 * @param   logging [in, optional] logging
+	 * @param   stack_size [out, optional] stack_size
+	 * @param	uwop [in, out, optional] search uwop
+	 * @param	signature_scan [in, optional] search signature
+	 *
+	 * @return	address of function, if found to meet search parameters
+	 */
 	uintptr_t query_unwind_info( const uintptr_t image_base, const uintptr_t* function_address = nullptr, const log logging = log::LOG_DISABLED, DWORD64* stack_size = nullptr, operation* uwop = nullptr, const sig_scan* signature_scan = nullptr );
 
 	/* walks the callstack of the running thread (doesn't integrity check) */

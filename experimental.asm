@@ -41,13 +41,13 @@ spoof_info ENDS
 experimental_spoof proc
 
     mov rax, [rsp]
-    mov [rsp+10h], rbx
+    mov [rsp+10h], rsi
     mov [rsp+08h], rbp
     mov rbp, rsp
 
     lea     rax, restore_experimental
     push    rax
-    lea     rbx, [rsp]
+    lea     rsi, [rsp]
 
 ; -------------------------------------------------------------
 ; mov rbp, rsp
@@ -106,7 +106,7 @@ restore_experimental proc
 
 mov rsp, rbp
 mov rbp, [rsp+08h]
-mov rbx, [rsp+10h]
+mov rsi, [rsp+10h]
 ret
 
 restore_experimental endp

@@ -373,54 +373,135 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 				invalid_call = true;
 			}
 
-			if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 6, 2, &instruction, operands ) ) )
+			if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 6, 4, &instruction, operands ) ) )
 			{
 				if ( instruction.mnemonic == ZYDIS_MNEMONIC_JMP )
 				{
 					/* jmp [reg] */
 					if ( operands[ 0 ].type == ZYDIS_OPERAND_TYPE_MEMORY )
 					{
+						uintptr_t jmp_address{ }, jmp_address_reference{ };
+
 						switch ( operands[ 0 ].mem.base )
 						{
+							case ZYDIS_REGISTER_R12:
+							{
+								jmp_address_reference = context.R12;
+								break;
+							}
+							case ZYDIS_REGISTER_R13:
+							{
+								jmp_address_reference = context.R13;
+								break;
+							}
+							case ZYDIS_REGISTER_R14:
+							{
+								jmp_address_reference = context.R14;
+								break;
+							}
+							case ZYDIS_REGISTER_R15:
+							{
+								jmp_address_reference = context.R15;
+								break;
+							}
+							case ZYDIS_REGISTER_RDI:
+							{
+								jmp_address_reference = context.Rdi;
+								break;
+							}
+							case ZYDIS_REGISTER_RSI:
+							{
+								jmp_address_reference = context.Rsi;
+								break;
+							}
 							case ZYDIS_REGISTER_RBX:
 							{
-								uintptr_t rbx_address{ };
-								if ( ReadProcessMemory( process, ( LPCVOID ) context.Rbx, &rbx_address, sizeof( uintptr_t ), nullptr ) )
-								{
-									if ( !in_valid_module( rbx_address, GetProcessId( process ) ) )
-									{
-										sw_logs.emplace_back( " (jmp to unbacked memory region)" );
-										// printf( " (jmp to unbacked memory region)" );
-										unbacked_code = true;
-									}
-								}
-
-								// printf( " (jmp [rbx])" );
+								jmp_address_reference = context.Rbx;
+								break;
+							}
+							case ZYDIS_REGISTER_RBP:
+							{
+								jmp_address_reference = context.Rbp;
 								break;
 							}
 							default:
 								break;
 						}
+
+						if ( jmp_address_reference && ReadProcessMemory( process, ( LPCVOID ) jmp_address_reference, &jmp_address, sizeof( uintptr_t ), nullptr ) )
+						{
+							if ( !in_valid_module( jmp_address, GetProcessId( process ) ) )
+							{
+								sw_logs.emplace_back( " (jmp to unbacked memory region)" );
+								unbacked_code = true;
+							}
+							if ( jmp_address != stack_frame.AddrReturn.Offset )
+							{
+								sw_logs.emplace_back( " (jmp to unexpected memory region)" );
+								address_discrepancy = true;
+							}
+						}
 					}
 					/* jmp reg */
 					else if ( operands[ 0 ].type == ZYDIS_OPERAND_TYPE_REGISTER )
 					{
+						uintptr_t jmp_address{ };
+
 						switch ( operands[ 0 ].reg.value )
 						{
+							case ZYDIS_REGISTER_R12:
+							{
+								jmp_address = context.R12;
+								break;
+							}
+							case ZYDIS_REGISTER_R13:
+							{
+								jmp_address = context.R13;
+								break;
+							}
+							case ZYDIS_REGISTER_R14:
+							{
+								jmp_address = context.R14;
+								break;
+							}
+							case ZYDIS_REGISTER_R15:
+							{
+								jmp_address = context.R15;
+								break;
+							}
+							case ZYDIS_REGISTER_RDI:
+							{
+								jmp_address = context.Rdi;
+								break;
+							}
+							case ZYDIS_REGISTER_RSI:
+							{
+								jmp_address = context.Rsi;
+								break;
+							}
 							case ZYDIS_REGISTER_RBX:
 							{
-								if ( !in_valid_module( context.Rbx, GetProcessId( process ) ) )
-								{
-									sw_logs.emplace_back( " (jmp to unbacked memory region)" );
-									// printf( " (jmp to unbacked memory region)" );
-									unbacked_code = true;
-								}
-
-								// printf( " (jmp rbx)" );
+								jmp_address = context.Rbx;
+								break;
+							}
+							case ZYDIS_REGISTER_RBP:
+							{
+								jmp_address = context.Rbp;
 								break;
 							}
 							default:
 								break;
+						}
+
+						if ( jmp_address && !in_valid_module( jmp_address, GetProcessId( process ) ) )
+						{
+							sw_logs.emplace_back( " (jmp to unbacked memory region)" );
+							unbacked_code = true;
+						}
+						if ( jmp_address != stack_frame.AddrReturn.Offset )
+						{
+							sw_logs.emplace_back( " (jmp to unexpected memory region)" );
+							address_discrepancy = true;
 						}
 					}
 				}

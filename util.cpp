@@ -61,14 +61,16 @@ std::uintptr_t util::sig_scan( const char* signature, const uintptr_t base, cons
     if ( !base )
         return 0;
 
-    const DWORD size = end ? end - base : reinterpret_cast< PIMAGE_NT_HEADERS >( reinterpret_cast< std::uint8_t* >( base ) + reinterpret_cast< PIMAGE_DOS_HEADER >( base )->e_lfanew )->OptionalHeader.SizeOfImage;
+    const DWORD size = end ? DWORD( end - base ) : reinterpret_cast< PIMAGE_NT_HEADERS >( reinterpret_cast< std::uint8_t* >( base ) + reinterpret_cast< PIMAGE_DOS_HEADER >( base )->e_lfanew )->OptionalHeader.SizeOfImage;
 
     std::vector<int> bytes{ };
     pattern_to_bytes( signature, bytes );
 
     auto scan_bytes = reinterpret_cast< std::uint8_t* >( base );
-
     auto s = bytes.size( );
+    if ( size <= s )
+        return 0;
+
     auto d = bytes.data( );
 
     for ( auto i = 0ul; i < size - s; ++i )

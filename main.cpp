@@ -83,13 +83,13 @@ int main( )
 	*/
 
 	uw::sig_scan gadget_sig{ };
-	gadget_sig.pattern = "FF 23";
+	gadget_sig.pattern = "FF 26";
 	gadget_sig.return_type = uw::sig_scan::DIRECT_ADDRESS;
 
 	DWORD64 gadget_size{ };
 	const auto gadget{ uw::query_unwind_info( kernelbase, nullptr, uw::LOG_VERBOSE, &gadget_size, nullptr, &gadget_sig ) };
 	if ( !gadget )
-		return terminate( "jmp rbx not found" );
+		return terminate( "jmp [rsi] not found" );
 
 	spoof_info config{ };
 	config.add_rsp_gadget = ( PVOID ) ( message_box_a + 0x4e );
@@ -116,17 +116,19 @@ int main( )
 
 	getchar( );
 
-	const HANDLE thread_snapshot{ CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 ) };
-	if ( thread_snapshot == INVALID_HANDLE_VALUE )
-		return terminate( "could not retrieve open thread snapshot" );
+	//const HANDLE thread_snapshot{ CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 ) };
+	//if ( thread_snapshot == INVALID_HANDLE_VALUE )
+	//	return terminate( "could not retrieve open thread snapshot" );
 
-	THREADENTRY32 thread_entry{ };
-	thread_entry.dwSize = sizeof( THREADENTRY32 );
+	//THREADENTRY32 thread_entry{ };
+	//thread_entry.dwSize = sizeof( THREADENTRY32 );
 
-	if ( Thread32First( thread_snapshot, &thread_entry ) )
-		do { uw::stack_walk( thread_entry.th32OwnerProcessID, thread_entry.th32ThreadID ); } while ( Thread32Next( thread_snapshot, &thread_entry ) );
+	//if ( Thread32First( thread_snapshot, &thread_entry ) )
+	//	do { uw::stack_walk( thread_entry.th32OwnerProcessID, thread_entry.th32ThreadID, uw::LOG_DISABLED ); } while ( Thread32Next( thread_snapshot, &thread_entry ) );
 
-	CloseHandle( thread_snapshot );
+	//CloseHandle( thread_snapshot );
+
+	uw::stack_walk( GetCurrentProcessId( ), tid );
 
 	return terminate( "success", true );
 }
