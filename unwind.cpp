@@ -148,7 +148,7 @@ void uw::stack_walk( )
 	SymCleanup( GetCurrentProcess( ) );
 }
 
-void uw::stack_walk( const DWORD pid, const DWORD tid )
+void uw::stack_walk( const DWORD pid, const DWORD tid, const log logging )
 {
 	static std::unordered_set<DWORD>blacklisted_pids;
 	if ( blacklisted_pids.find( pid ) != blacklisted_pids.end( ) )
@@ -170,12 +170,12 @@ void uw::stack_walk( const DWORD pid, const DWORD tid )
 		return;
 	}
 
-	stack_walk( process, thread );
+	stack_walk( process, thread, logging );
 	CloseHandle( thread );
 	CloseHandle( process );
 }
 
-void uw::stack_walk( const HANDLE process, const HANDLE thread )
+void uw::stack_walk( const HANDLE process, const HANDLE thread, const log logging )
 {
 	CHAR process_name[ MAX_PATH ];
 	GetModuleFileNameExA( process, NULL, process_name, MAX_PATH );
@@ -217,6 +217,8 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 
 	uintptr_t last_function_address{ };
 
+	std::vector<std::string> sw_logs{ };
+
 	while ( StackWalk64(
 		IMAGE_FILE_MACHINE_AMD64,
 		process,
@@ -240,13 +242,20 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 			symbol->MaxNameLen = MAX_SYM_NAME;
 
 			if ( SymFromAddr( process, frame_return_address, &displacement, symbol ) )
-				printf( " %hu, %s!%s+0x%llx", frame_count, ( strrchr( module_info.ImageName, '\\' ) + 1 ), symbol->Name, displacement );
+			{
+				sw_logs.emplace_back( tfm::format( " %hu, %s!%s+0x%llx", frame_count, ( strrchr( module_info.ImageName, '\\' ) + 1 ), symbol->Name, displacement ) );
+				// printf( " %hu, %s!%s+0x%llx", frame_count, ( strrchr( module_info.ImageName, '\\' ) + 1 ), symbol->Name, displacement );
+			}
 			else
-				printf( " %hu, %s+0x%llx", frame_count, ( strrchr( module_info.ImageName, '\\' ) + 1 ), ( frame_return_address - module_info.BaseOfImage ) );
+			{
+				sw_logs.emplace_back( tfm::format( " %hu, %s+0x%llx", frame_count, ( strrchr( module_info.ImageName, '\\' ) + 1 ), ( frame_return_address - module_info.BaseOfImage ) ) );
+				// printf( " %hu, %s+0x%llx", frame_count, ( strrchr( module_info.ImageName, '\\' ) + 1 ), ( frame_return_address - module_info.BaseOfImage ) );
+			}
 		}
 		else
 		{
-			printf( " %hu, 0x%llx (invalid module)", frame_count, frame_return_address );
+			sw_logs.emplace_back( tfm::format( " %hu, 0x%llx (invalid module)", frame_count, frame_return_address ) );
+			// printf( " %hu, 0x%llx (invalid module)", frame_count, frame_return_address );
 			unbacked_code = true;
 		}
 
@@ -271,7 +280,7 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 				{
 					last_function_address = base_thread_init_thunk;
 					frame_count++;
-					printf( "\n" );
+					sw_logs.emplace_back( tfm::format("\n") );
 					continue;
 				}
 
@@ -305,8 +314,9 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 								{
 									if ( last_function_address != ( uintptr_t ) called_address )
 									{
-										printf( " (call address doesn't match)" );
 										address_discrepancy = true;
+										sw_logs.emplace_back( " (call address doesn't match)" );
+										// printf( " (call address doesn't match)" );
 									}
 								}
 							}
@@ -333,13 +343,15 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 							if ( stack_size )
 							{
 								address_discrepancy = true;
-								printf( " (call address doesn't match)" );
+								sw_logs.emplace_back( " (call address doesn't match)" );
+								// printf( " (call address doesn't match)" );
 							}
 						}
 						else
 						{
 							address_discrepancy = true;
-							printf( " (call address doesn't match)" );
+							sw_logs.emplace_back( " (call address doesn't match)" );
+							// printf( " (call address doesn't match)" );
 						}
 					}
 				}
@@ -356,7 +368,8 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 			}
 			else
 			{
-				printf( " (no call found)" );
+				sw_logs.emplace_back( " (no call found)" );
+				// printf( " (no call found)" );
 				invalid_call = true;
 			}
 
@@ -376,7 +389,8 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 								{
 									if ( !in_valid_module( rbx_address, GetProcessId( process ) ) )
 									{
-										printf( " (jmp to unbacked memory region)" );
+										sw_logs.emplace_back( " (jmp to unbacked memory region)" );
+										// printf( " (jmp to unbacked memory region)" );
 										unbacked_code = true;
 									}
 								}
@@ -397,7 +411,8 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 							{
 								if ( !in_valid_module( context.Rbx, GetProcessId( process ) ) )
 								{
-									printf( " (jmp to unbacked memory region)" );
+									sw_logs.emplace_back( " (jmp to unbacked memory region)" );
+									// printf( " (jmp to unbacked memory region)" );
 									unbacked_code = true;
 								}
 
@@ -420,13 +435,16 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 		else
 			last_function_address = frame_return_address - displacement;
 
-		printf( "\n" );
+		sw_logs.emplace_back( tfm::format( "\n" ) );
 
 		frame_count++;
 	}
 
 	if ( unbacked_code || invalid_call || address_discrepancy )
 	{
+		for ( const auto& sw_log : sw_logs )
+			printf( sw_log.c_str( ) );
+
 		printf( "\nwarning: possible stack tampering detected\n" );
 
 		if ( unbacked_code )
@@ -435,6 +453,11 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread )
 			printf( " * found return address with no previous call\n" );
 		if ( address_discrepancy )
 			printf( " * found call address discrepancy\n" );
+	}
+	else if ( logging & LOG_VERBOSE )
+	{
+		for ( const auto& sw_log : sw_logs )
+			printf( sw_log.c_str( ) );
 	}
 
 	printf( "-------------------------------------\n" );

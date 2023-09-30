@@ -86,8 +86,8 @@ namespace uw
 	void stack_walk( );
 
 	/* walks the callstack of a specified <process_id, thread_id> pair */
-	void stack_walk( const DWORD pid, const DWORD tid );
+	void stack_walk( const DWORD pid, const DWORD tid, const log logging = log::LOG_VERBOSE );
 
 	/* walks the callstack of a specified <process_handle, thread_handle> pair */
-	void stack_walk( const HANDLE process, const HANDLE thread );
+	void stack_walk( const HANDLE process, const HANDLE thread, const log logging = log::LOG_VERBOSE );
 }
