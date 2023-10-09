@@ -256,6 +256,7 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 		}
 		else
 		{
+			raised_flags++;
 			sw_logs.emplace_back( tfm::format( " %hu, 0x%llx (invalid module)", frame_count, frame_return_address ) );
 			// printf( " %hu, 0x%llx (invalid module)", frame_count, frame_return_address );
 			unbacked_code = true;
@@ -547,7 +548,7 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 		if ( address_discrepancy )
 			printf( " * found call address discrepancy\n" );
 
-		printf( "\ntotal raised flags: %d\n", raised_flags );
+		printf( "\ntotal raised flags: %ld\n", raised_flags );
 	}
 	else if ( logging & LOG_VERBOSE )
 	{
