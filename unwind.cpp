@@ -362,9 +362,11 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 			{
 				// printf( " (previous instruction is a syscall)" );
 			}
-			else if ( instruction_buffer[ 3 ] == 0xFF || instruction_buffer[ 4 ] == 0xFF )
+			else if ( ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 3, 3, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_CALL ) ||
+				( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 4, 2, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_CALL ) )
 			{
-				// printf( " (previous instruction is a jmp to a register)" );
+				// sw_logs.emplace_back( " (previous instruction is a general-purpose register call)" );
+				// printf( " (previous instruction is a general-purpose register call)" );
 			}
 			else
 			{
