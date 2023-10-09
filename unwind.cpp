@@ -219,6 +219,8 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 
 	std::vector<std::string> sw_logs{ };
 
+	size_t raised_flags{ };
+
 	while ( StackWalk64(
 		IMAGE_FILE_MACHINE_AMD64,
 		process,
@@ -270,7 +272,7 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 		if ( ReadProcessMemory( process, ( LPCVOID ) ( frame_return_address - 6 ), &instruction_buffer, 8, nullptr ) )
 		{
 			ZydisDecodedOperand operands[ ZYDIS_MAX_OPERAND_COUNT ];
-			if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer, 8, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_CALL )
+			if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer, 7, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_CALL )
 			{
 				static auto base_thread_init_thunk = ( uintptr_t ) GetProcAddress( GetModuleHandleA( "kernel32" ), "BaseThreadInitThunk" );
 				static auto rtl_user_thread_start = ( uintptr_t ) GetProcAddress( GetModuleHandleA( "ntdll" ), "RtlUserThreadStart" );
@@ -314,6 +316,7 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 								{
 									if ( last_function_address != ( uintptr_t ) called_address )
 									{
+										raised_flags++;
 										address_discrepancy = true;
 										sw_logs.emplace_back( " (call address doesn't match)" );
 										// printf( " (call address doesn't match)" );
@@ -326,7 +329,7 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 				
 				 // printf( " (previous instruction is a call)" );
 			}
-			else if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 1, 8, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_CALL )
+			else if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 1, 5, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_CALL )
 			{
 				uintptr_t absolute_address{ };
 				if ( ZYAN_SUCCESS( ZydisCalcAbsoluteAddress( &instruction, operands, frame_return_address - 5, &absolute_address ) ) )
@@ -342,6 +345,7 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 						{
 							if ( stack_size )
 							{
+								raised_flags++;
 								address_discrepancy = true;
 								sw_logs.emplace_back( " (call address doesn't match)" );
 								// printf( " (call address doesn't match)" );
@@ -349,6 +353,7 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 						}
 						else
 						{
+							raised_flags++;
 							address_discrepancy = true;
 							sw_logs.emplace_back( " (call address doesn't match)" );
 							// printf( " (call address doesn't match)" );
@@ -358,7 +363,7 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 
 				 // printf( " (previous instruction is a relative call)" );
 			}
-			else if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 4, 8, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_SYSCALL )
+			else if ( ZYAN_SUCCESS( ZydisDecoderDecodeFull( &decoder, instruction_buffer + 4, 2, &instruction, operands ) ) && instruction.mnemonic == ZYDIS_MNEMONIC_SYSCALL )
 			{
 				// printf( " (previous instruction is a syscall)" );
 			}
@@ -370,6 +375,7 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 			}
 			else
 			{
+				raised_flags++;
 				sw_logs.emplace_back( " (no call found)" );
 				// printf( " (no call found)" );
 				invalid_call = true;
@@ -434,11 +440,13 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 						{
 							if ( !in_valid_module( jmp_address, GetProcessId( process ) ) )
 							{
+								raised_flags++;
 								sw_logs.emplace_back( " (jmp to unbacked memory region)" );
 								unbacked_code = true;
 							}
 							if ( jmp_address != stack_frame.AddrReturn.Offset )
 							{
+								raised_flags++;
 								sw_logs.emplace_back( " (jmp to unexpected memory region)" );
 								address_discrepancy = true;
 							}
@@ -497,11 +505,13 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 
 						if ( jmp_address && !in_valid_module( jmp_address, GetProcessId( process ) ) )
 						{
+							raised_flags++;
 							sw_logs.emplace_back( " (jmp to unbacked memory region)" );
 							unbacked_code = true;
 						}
 						if ( jmp_address != stack_frame.AddrReturn.Offset )
 						{
+							raised_flags++;
 							sw_logs.emplace_back( " (jmp to unexpected memory region)" );
 							address_discrepancy = true;
 						}
@@ -536,6 +546,8 @@ void uw::stack_walk( const HANDLE process, const HANDLE thread, const log loggin
 			printf( " * found return address with no previous call\n" );
 		if ( address_discrepancy )
 			printf( " * found call address discrepancy\n" );
+
+		printf( "\ntotal raised flags: %d\n", raised_flags );
 	}
 	else if ( logging & LOG_VERBOSE )
 	{
