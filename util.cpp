@@ -68,7 +68,7 @@ std::uintptr_t util::sig_scan( const char* signature, const uintptr_t base, cons
 
     auto scan_bytes = reinterpret_cast< std::uint8_t* >( base );
     auto s = bytes.size( );
-    if ( size <= s )
+    if ( size < s )
         return 0;
 
     auto d = bytes.data( );
